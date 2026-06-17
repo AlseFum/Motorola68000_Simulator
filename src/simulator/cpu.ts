@@ -35,7 +35,42 @@ export class M68K {
   d = new Int32Array(8); a = new Uint32Array(8); pc = 0; sr = 0; cycles = 0
   memory: Memory; state: SimulatorState = 'idle'; program: Instruction[] = []
   instrIndex = 0; breakpoints = new Set<number>(); output = ''
-  private _halt = false; private _stopped = false; private em = new Map<string, Exec>()
+  private _halt = false; private _stopped = false; private _branchTaken = false; private em = new Map<string, Exec>()
+
+  // --- Interrupts ---
+  pendingIrq = 0
+  irqEnabled = true
+
+  private irqMask(): number { return (this.sr >> 8) & 7 }
+  private setIrqMask(v: number) { this.sr = (this.sr & 0xF8FF) | ((v & 7) << 8) }
+
+  requestInterrupt(level: number): void {
+    if (level >= 1 && level <= 7) this.pendingIrq = Math.max(this.pendingIrq, level)
+  }
+
+  /** service any pending interrupt before next instruction */
+  private serviceInterrupt(): boolean {
+    if (this.pendingIrq === 0 || !this.irqEnabled) return false
+    const level = this.pendingIrq
+    if (level <= this.irqMask() && level !== 7) return false  // masked
+    this.pendingIrq = 0
+
+    // autovector address: $060 + level * 4
+    const vecAddr = 0x60 + level * 4
+    const handlerPc = this.memory.readLong(vecAddr)
+    if (handlerPc === 0) return false  // no handler installed
+
+    // push PC (deeper), then SR (shallower) — RTE pops SR first then PC
+    this.a[7] = u32(this.a[7] - 4)
+    this.memory.writeLong(this.a[7], this.pc)
+    this.a[7] = u32(this.a[7] - 2)
+    this.memory.writeWord(this.a[7], this.sr)
+
+    // set interrupt mask to level
+    this.setIrqMask(level)
+    this.pc = handlerPc
+    return true
+  }
 
   constructor() { this.memory = new Memory(); this._init() }
   private _init(): void {
@@ -292,12 +327,12 @@ export class M68K {
   private iPEA = (c: M68K, i: Instruction): void => { const addr = c.eaAddr(i.src!); c.a[7] = u32(c.a[7] - 4); c.memory.writeLong(c.a[7], addr) }
   private iLINK = (c: M68K, i: Instruction): void => { const disp = sext(i.imm!, 16); c.a[7] = u32(c.a[7] - 4); c.memory.writeLong(c.a[7], c.a[i.dst!.reg]); c.a[i.dst!.reg] = c.a[7]; c.a[7] = u32(c.a[7] + disp) }
   private iUNLK = (c: M68K, i: Instruction): void => { c.a[7] = c.a[i.dst!.reg]; c.a[i.dst!.reg] = c.memory.readLong(c.a[7]); c.a[7] = u32(c.a[7] + 4) }
-  private iBRA = (c: M68K, i: Instruction): void => { if (i.mnemonic === 'BRA' || c.checkCond(i.cond!)) { c.pc = i.targetAddr! } }
-  private iBSR = (c: M68K, i: Instruction): void => { c.a[7] = u32(c.a[7] - 4); c.memory.writeLong(c.a[7], c.pc + i.byteSize); c.pc = i.targetAddr! }
-  private iJSR = (c: M68K, i: Instruction): void => { const addr = c.eaAddr(i.src!); c.a[7] = u32(c.a[7] - 4); c.memory.writeLong(c.a[7], c.pc + i.byteSize); c.pc = addr }
-  private iRTS = (c: M68K, i: Instruction): void => { c.pc = c.memory.readLong(c.a[7]); c.a[7] = u32(c.a[7] + 4) }
-  private iRTE = (c: M68K, i: Instruction): void => { c.sr = c.memory.readWord(c.a[7]); c.a[7] = u32(c.a[7] + 2); c.pc = c.memory.readLong(c.a[7]); c.a[7] = u32(c.a[7] + 4) }
-  private iJMP = (c: M68K, i: Instruction): void => { c.pc = c.eaAddr(i.src!) }
+  private iBRA = (c: M68K, i: Instruction): void => { if (i.mnemonic === 'BRA' || c.checkCond(i.cond!)) { c.pc = i.targetAddr!; c._branchTaken = true } }
+  private iBSR = (c: M68K, i: Instruction): void => { c.a[7] = u32(c.a[7] - 4); c.memory.writeLong(c.a[7], c.pc + i.byteSize); c.pc = i.targetAddr!; c._branchTaken = true }
+  private iJSR = (c: M68K, i: Instruction): void => { const addr = c.eaAddr(i.src!); c.a[7] = u32(c.a[7] - 4); c.memory.writeLong(c.a[7], c.pc + i.byteSize); c.pc = addr; c._branchTaken = true }
+  private iRTS = (c: M68K, i: Instruction): void => { c.pc = c.memory.readLong(c.a[7]); c.a[7] = u32(c.a[7] + 4); c._branchTaken = true }
+  private iRTE = (c: M68K, i: Instruction): void => { c.sr = c.memory.readWord(c.a[7]); c.a[7] = u32(c.a[7] + 2); c.pc = c.memory.readLong(c.a[7]); c.a[7] = u32(c.a[7] + 4); c._branchTaken = true }
+  private iJMP = (c: M68K, i: Instruction): void => { c.pc = c.eaAddr(i.src!); c._branchTaken = true }
   private iQUICK = (c: M68K, i: Instruction): void => { const val = (i.imm! & 7) || 8; const dst = c.rOp(i.dst!, i.size); const s = i.size; const m = s === 1 ? 0xFF : s === 2 ? 0xFFFF : 0xFFFFFFFF; let r: number; if (i.mnemonic === 'ADDQ') { r = (dst + val) & m; c.fNZVC(r, s, (dst + val) > m, false) } else { r = (dst - val) & m; c.fNZVC(r, s, val > dst, false) }; c.wOp(i.dst!, s, r) }
   private iBTST = (c: M68K, i: Instruction): void => { const bit = i.imm! & 31; const val = c.rOp(i.dst!, i.size); c.z = !((val >>> bit) & 1) }
   private iBSET = (c: M68K, i: Instruction): void => {
@@ -328,7 +363,7 @@ export class M68K {
     const cond = i.cond!
     if (!c.checkCond(cond)) {
       c.d[i.dst!.reg] = s32((c.d[i.dst!.reg] & 0xFFFF) - 1)
-      if (s32(c.d[i.dst!.reg]) !== -1) c.pc = i.targetAddr!
+      if (s32(c.d[i.dst!.reg]) !== -1) { c.pc = i.targetAddr!; c._branchTaken = true }
       else c.d[i.dst!.reg] = (c.d[i.dst!.reg] & 0xFFFF)
     }
   }
@@ -359,13 +394,26 @@ export class M68K {
     if (this.state === 'finished' || this.state === 'error') return false
     if (this._stopped || this.instrIndex >= this.program.length) { this.state = 'finished'; return false }
     const instr = this.program[this.instrIndex]; this.pc = instr.addr
+
+    // check for pending interrupts before execution
+    if (this.serviceInterrupt()) {
+      this.syncIndex()
+      this.cycles += 4
+      this.state = 'paused'
+      return true
+    }
+
     try {
       const h = this.em.get(instr.mnemonic); if (!h) throw new Error('Unknown: ' + instr.mnemonic)
       h(this, instr); this.cycles += 4
     } catch (e: any) {
       this.state = 'error'; this.output += '\n=== ERROR at ' + instr.addr.toString(16).toUpperCase().padStart(6, '0') + ': ' + e.message + ' ===\n'; return false
     }
-    if (this.pc !== instr.addr) this.syncIndex(); else this.instrIndex++
+    const _wasBranch = this._branchTaken
+    this._branchTaken = false
+
+    // for control flow, sync instrIndex
+    if (_wasBranch || this.pc !== instr.addr) this.syncIndex(); else this.instrIndex++
     if (this._halt) { this.state = this._stopped ? 'finished' : 'finished'; return false }
     if (this.instrIndex >= this.program.length) { this.state = 'finished'; return false }
     if (this.breakpoints.has(this.program[this.instrIndex]?.addr)) { this.state = 'paused'; return false }

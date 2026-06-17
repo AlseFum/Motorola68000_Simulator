@@ -32,6 +32,7 @@ import { ref } from 'vue'
 import type { Memory } from '../simulator'
 
 const props = defineProps<{ memory: Memory }>()
+const emit = defineEmits<{ irq: [level: number] }>()
 
 const names = ['Up', 'Down', 'Left', 'Right', 'A', 'B']
 const inputVals = ref([0, 0, 0, 0, 0, 0])
@@ -39,6 +40,9 @@ const inputVals = ref([0, 0, 0, 0, 0, 0])
 function pDown(idx: number) {
   inputVals.value[idx] = 1
   props.memory?.setInput(idx, 1)
+  // direction keys → level 1,  A/B → level 2
+  if (idx < 4) emit('irq', 1)
+  else emit('irq', 2)
 }
 
 function pUp(idx: number) {

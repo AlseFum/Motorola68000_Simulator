@@ -51,7 +51,7 @@ export class Assembler {
       if (semiPos >= 0) { comment = line.substring(semiPos + 1).trim(); line = line.substring(0, semiPos) }
       line = line.trim(); if (!line && !comment) continue
       const rl: RawLine = { text: srcLines[i], lineNum: i, comment }
-      const labelMatch = line.match(/^([a-zA-Z_]\w*)\s*:(.*)/)
+      const labelMatch = line.match(/^([a-zA-Z_.]\w*)\s*:(.*)/)
       if (labelMatch) { rl.label = labelMatch[1]; line = labelMatch[2].trim() }
       if (!line && rl.label) { result.push(rl); continue }
       const parts = line.split(/\s+/)

@@ -44,7 +44,7 @@
         </div>
         <div class="right-top io-split" v-show="rightTab === 'io'">
           <div class="io-display"><DisplayPanel :memory="memory" /></div>
-          <div class="io-input"><InputPanel :memory="memory" /></div>
+          <div class="io-input"><InputPanel :memory="memory" @irq="(l) => irq(l)" /></div>
         </div>
         <div class="right-bottom">
           <OutputPanel :text="output" @clear="doClearOutput" />
@@ -67,7 +67,7 @@ import { useSimulator } from './composables/useSimulator'
 
 const {
   cpu, snapshot, state, output, errors, currentLine,
-  assemble, step, run, runToLine, reset
+  assemble, step, run, runToLine, reset, irq
 } = useSimulator()
 
 const memory = cpu.memory
@@ -109,21 +109,678 @@ onUnmounted(() => {
 })
 
 const examples: Example[] = [
-  { name: '1. Sum 1 to 10', code: `; Sum of numbers 1+2+3+...+10 = 55\n        ORG     $4000\n\nSTART:  MOVEQ   #0,D0           ; D0 = sum\n        MOVEQ   #1,D1           ; D1 = counter\n\nLOOP:   ADD     D1,D0           ; sum += counter\n        ADDQ    #1,D1           ; counter++\n        CMPI    #11,D1          ; compare with 11\n        BNE     LOOP            ; loop if not equal\n\n        MOVE.L  D0,D1           ; D1 = result\n        MOVEQ   #5,D0           ; print decimal\n        TRAP    #15\n\n        MOVEQ   #0,D0           ; halt\n        TRAP    #15\n\n        END     START` },
-  { name: '2. Fibonacci', code: `; Fibonacci: 0,1,1,2,3,5,8,13,21,34,55\n        ORG     $4000\n\nSTART:  MOVEQ   #0,D2           ; a = 0\n        MOVEQ   #1,D3           ; b = 1\n        MOVEQ   #10,D4          ; count = 10\n\nLOOP:   MOVE.L  D2,D1           ; D1 = a\n        MOVEQ   #5,D0           ; print decimal\n        TRAP    #15\n        ; newline\n        MOVE.L  #$0A,D1\n        MOVEQ   #1,D0\n        TRAP    #15\n        ; Next\n        MOVE.L  D3,D5\n        ADD.L   D2,D3\n        MOVE.L  D5,D2\n        SUBQ    #1,D4\n        BNE     LOOP\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '3. Factorial 5!', code: `; Factorial: 5! = 120\n        ORG     $4000\n\nSTART:  MOVEQ   #5,D0\n        MOVEQ   #1,D1\n\nFACT:   MULS    D0,D1\n        SUBQ    #1,D0\n        BNE     FACT\n\n        MOVE.L  D1,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '4. GCD Euclid', code: `; GCD(48,18) = 6\n        ORG     $4000\n\nSTART:  MOVE.L  #48,D0\n        MOVE.L  #18,D1\n\nGCD:    CMP     D1,D0\n        BEQ     DONE\n        BGT     SUBAB\n        SUB     D0,D1\n        BRA     GCD\nSUBAB:  SUB     D1,D0\n        BRA     GCD\n\nDONE:   MOVE.L  D0,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '5. Prime Check', code: `; Check if 17 is prime\n        ORG     $4000\n\nSTART:  MOVE.L  #17,D2\n        CMPI    #2,D2\n        BLT     NOTPRIME\n        MOVEQ   #2,D3\n\nLOOP:   MOVE.L  D2,D1\n        DIVU    D3,D1\n        SWAP    D1\n        TST     D1\n        BEQ     NOTPRIME\n        ADDQ    #1,D3\n        CMP     D2,D3\n        BCS     LOOP\n        MOVEQ   #1,D1\n        BRA     DONE\nNOTPRIME:MOVEQ #0,D1\nDONE:   MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '6. Bubble Sort', code: `; Bubble sort [5,3,8,1,2] -> 1,2,3,5,8\n        ORG     $4000\n\nSTART:  JSR     SORT\n        LEA     DATA,A0\n        MOVEQ   #5,D4\nPRINT:  MOVE.B  (A0)+,D1\n        ANDI    #$FF,D1\n        MOVEQ   #4,D0\n        TRAP    #15\n        SUBQ    #1,D4\n        BEQ     DONE\n        BRA     PRINT\nDONE:   MOVEQ   #0,D0\n        TRAP    #15\n\nSORT:   MOVEQ   #4,D0\nOUTER:  LEA     DATA,A0\n        MOVE.L  D0,D1\n        BRA     INNER_E\nINNER:  MOVE.B  (A0),D2\n        MOVE.B  1(A0),D3\n        CMP     D3,D2\n        BLE     NOSWAP\n        MOVE.B  D3,(A0)\n        MOVE.B  D2,1(A0)\nNOSWAP: ADDQ    #1,A0\nINNER_E:SUBQ    #1,D1\n        BNE     INNER\n        SUBQ    #1,D0\n        BNE     OUTER\n        RTS\n\nDATA:   DC.B    5,3,8,1,2\n\n        END     START` },
-  { name: '7. String Copy', code: `; Copy string SRC -> DST then print\n        ORG     $4000\n\nSTART:  LEA     SRC,A0\n        LEA     DST,A1\n\nCOPY:   MOVE.B  (A0)+,(A1)+\n        BNE     COPY\n\n        MOVEQ   #2,D0\n        LEA     DST,A1\n        TRAP    #15\n\n        MOVEQ   #0,D0\n        TRAP    #15\n\nSRC:    DC.B    'Hello, Motorola 68K!',0\nDST:    DS.B    64\n\n        END     START` },
-  { name: '8. Mul (shift-add)', code: `; Multiply 13 x 7 = 91 (shift+add)\n        ORG     $4000\n\nSTART:  MOVEQ   #13,D0\n        MOVEQ   #7,D1\n        MOVEQ   #0,D2\n\nMULT:   LSR     #1,D1\n        BCC     SKIP\n        ADD     D0,D2\nSKIP:   LSL     #1,D0\n        TST     D1\n        BNE     MULT\n\n        MOVE.L  D2,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '9. Bit Operations', code: `; Demonstrate BTST,BSET,BCLR,BCHG,ROL,ROR\n        ORG     $4000\n\nSTART:  MOVE.L  #$1234ABCD,D0\n        BTST    #0,D0           ; bit 0 of $ABCD = 1\n        BNE     BIT_SET\n        MOVEQ   #0,D0\nBIT_SET:ROL.L   #4,D0           ; $234ABCD1\n        ROR.L   #8,D0           ; $D1234ABC\n        BCHG    #0,D0           ; toggle bit 0\n        BSET    #4,D0           ; set bit 4\n        BCLR    #8,D0           ; clear bit 8\n        MOVE.L  D0,D1\n        MOVEQ   #3,D0           ; print hex\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '10. Recursive Fac', code: `; Recursive factorial 5! = 120\n        ORG     $4000\n\nSTART:  MOVEQ   #5,D0\n        JSR     FACT\n        MOVE.L  D0,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n\nFACT:   CMPI    #1,D0\n        BGT     REC\n        MOVEQ   #1,D0\n        RTS\nREC:    MOVE.L  D0,-(A7)\n        SUBQ    #1,D0\n        JSR     FACT\n        MOVE.L  (A7)+,D1\n        MULS    D1,D0\n        RTS\n        END     START` },
-  { name: '11. Count 1-Bits', code: `; Count 1-bits in $DEADBEEF (should be 24)\n        ORG     $4000\n\nSTART:  MOVE.L  #$DEADBEEF,D0\n        MOVEQ   #0,D1\n        MOVEQ   #32,D2\n\nLOOP:   LSL     #1,D0\n        BCC     NOCARRY\n        ADDQ    #1,D1\nNOCARRY:SUBQ    #1,D2\n        BNE     LOOP\n\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '12. SETcc Demo', code: `; SETcc – set byte on condition\n        ORG     $4000\n\nSTART:  MOVEQ   #5,D0\n        MOVEQ   #3,D1\n        CMP     D1,D0           ; 5 > 3\n        SGT     D2              ; D2 = $FF (true)\n        SEQ     D3              ; D3 = $00 (false)\n        SNE     D4              ; D4 = $FF (true)\n        ANDI    #$FF,D2\n        MOVE.L  D2,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
-  { name: '13. Display Demo (XOR pattern)', code: `; Write XOR pattern to memory-mapped display\n; Display at $FF0000, 256x256 pixels grayscale\n        ORG     $4000\n\nSTART:  LEA     $FF0000,A0     ; A0 = display buffer\n        MOVEQ   #0,D4           ; y = 0\n\nROW:    MOVEQ   #0,D5           ; x = 0\n\nCOL:    ; pixel = (x XOR y) + x\n        MOVE.L  D5,D0           ; D0 = x\n        EOR     D4,D0           ; D0 = x ^ y\n        ADD     D5,D0           ; D0 = (x^y) + x\n        MOVE.B  D0,(A0)+        ; write to display\n        ADDQ    #1,D5           ; x++\n        CMPI    #256,D5         ; x < 256 ?\n        BNE     COL\n\n        ADDQ    #1,D4           ; y++\n        CMPI    #256,D4         ; y < 256 ?\n        BNE     ROW\n\n        MOVEQ   #0,D0\n        TRAP    #15             ; halt\n        END     START` },
-  { name: '14. Display Demo (Plasma)', code: `; Plasma-like pattern on display $FF0000\n; Uses (x*x + y*y) >> 6 as pixel value\n        ORG     $4000\n\nSTART:  LEA     $FF0000,A0     ; A0 = display buffer\n        MOVEQ   #0,D4           ; y = 0\n\nROW:    MOVEQ   #0,D5           ; x = 0\n\nCOL:    ; pixel = ((x*x/256) + (y*y/256)) & 0xFF\n        MOVE.L  D5,D0           ; D0 = x\n        MULS    D5,D0           ; D0 = x^2 (lower word)\n        LSR     #6,D0           ; scale down\n        MOVE.L  D4,D1           ; D1 = y\n        MULS    D4,D1           ; D1 = y^2\n        LSR     #6,D1           ; scale down\n        ADD     D1,D0           ; D0 = x^2 + y^2\n        MOVE.B  D0,(A0)+        ; write pixel\n        ADDQ    #1,D5           ; x++\n        CMPI    #256,D5\n        BNE     COL\n\n        ADDQ    #1,D4           ; y++\n        CMPI    #256,D4\n        BNE     ROW\n\n        MOVEQ   #0,D0\n        TRAP    #15             ; halt\n        END     START` },
-  { name: '15. Input Move Dot', code: `; Move a white dot on black background\n; Use D-Pad buttons (I/O tab) to move\n        ORG     $4000\n\nSTART:  MOVE.L  #128,D2         ; x\n        MOVE.L  #128,D3         ; y\n        MOVEQ   #$FF,D4         ; white\n        MOVEQ   #0,D5           ; black\n\n        JSR     FILL_BLK\n        JSR     DRAW\n\nLOOP:   ; save old position\n        MOVE.L  D2,D6\n        MOVE.L  D3,D7\n\n        ; read input\n        TST.B   $FE0000\n        BEQ     CK_DN\n        TST     D3\n        BEQ     CK_DN\n        SUBQ    #1,D3\nCK_DN:  TST.B   $FE0001\n        BEQ     CK_LT\n        CMPI    #255,D3\n        BEQ     CK_LT\n        ADDQ    #1,D3\nCK_LT:  TST.B   $FE0002\n        BEQ     CK_RT\n        TST     D2\n        BEQ     CK_RT\n        SUBQ    #1,D2\nCK_RT:  TST.B   $FE0003\n        BEQ     NOCHG\n        CMPI    #255,D2\n        BEQ     NOCHG\n        ADDQ    #1,D2\n\n        ; if no change, skip redraw\nNOCHG:  CMP.L   D6,D2\n        BNE     REDRAW\n        CMP.L   D7,D3\n        BNE     REDRAW\n        BRA     LOOP\n\n        ; draw at NEW, then erase OLD\nREDRAW: JSR     DRAW\n\n        ; push new position\n        MOVE.L  D2,-(A7)\n        MOVE.L  D3,-(A7)\n\n        ; erase old\n        MOVE.L  D6,D2\n        MOVE.L  D7,D3\n        JSR     ERASE\n\n        ; pop new position\n        MOVE.L  (A7)+,D3\n        MOVE.L  (A7)+,D2\n        BRA     LOOP\n\nDRAW:   LEA     $FF0000,A0\n        MOVE.L  D3,D0\n        LSL     #8,D0\n        ADD     D2,D0\n        ADDA.L  D0,A0\n        MOVE.B  D4,(A0)\n        RTS\n\nERASE:  LEA     $FF0000,A0\n        MOVE.L  D3,D0\n        LSL     #8,D0\n        ADD     D2,D0\n        ADDA.L  D0,A0\n        MOVE.B  D5,(A0)\n        RTS\n\nFILL_BLK:LEA   $FF0000,A0\n        MOVE.L  #16384,D0\nFILL_LP:CLR.L  (A0)+\n        SUBQ    #1,D0\n        BNE     FILL_LP\n        RTS\n\n        END     START` },
+  {
+    name: '1. Sum 1 to 10',
+    code: `; ===== Sum of 1+2+3+...+10 = 55 =====
+; Demonstrates: MOVEQ, ADD, ADDQ, CMPI, BNE, TRAP
+; TRAP #15 function table:
+;   D0=0 halt, D0=1 print char, D0=2 print string
+;   D0=3 print hex, D0=4 print word-decimal, D0=5 print long-decimal
+
+        ORG     $4000               ; code starts at $4000
+
+START:  MOVEQ   #0,D0               ; D0 = sum (init 0)
+        MOVEQ   #1,D1               ; D1 = counter (init 1)
+
+LOOP:   ADD     D1,D0               ; D0 += D1  (sum = sum + counter)
+        ADDQ    #1,D1               ; D1++      (counter = counter + 1)
+        CMPI    #11,D1              ; is D1 == 11?
+        BNE     LOOP                ; if not, repeat loop
+
+        ; loop finished: D0 = 55
+        MOVE.L  D0,D1               ; TRAP #15 uses D1 for output value
+        MOVEQ   #5,D0               ; function 5 = print D1.L as decimal
+        TRAP    #15                 ; output: "55"
+
+        MOVEQ   #0,D0               ; function 0 = halt
+        TRAP    #15
+
+        END     START` },
+  {
+    name: '2. Fibonacci',
+    code: `; ===== Fibonacci sequence: 0,1,1,2,3,5,8,13,21,34,55 =====
+; Demonstrates: register-to-register ADD, MOVE, nested loops
+
+        ORG     $4000
+
+START:  MOVEQ   #0,D2               ; a = 0   (current term)
+        MOVEQ   #1,D3               ; b = 1   (next term)
+        MOVEQ   #10,D4              ; count = 10 terms
+
+LOOP:   MOVE.L  D2,D1               ; put current term in D1 for output
+        MOVEQ   #5,D0               ; print D1 as decimal
+        TRAP    #15
+
+        MOVE.L  #$0A,D1             ; newline character (ASCII 10)
+        MOVEQ   #1,D0               ; print D1 as char
+        TRAP    #15
+
+        ; advance: new_a = b, new_b = a + b
+        MOVE.L  D3,D5               ; temp = b
+        ADD.L   D2,D3               ; b = b + a
+        MOVE.L  D5,D2               ; a = temp (old b)
+
+        SUBQ    #1,D4               ; count--
+        BNE     LOOP                ; repeat if count != 0
+
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '3. Factorial 5!',
+    code: `; ===== Factorial: 5! = 5*4*3*2*1 = 120 =====
+; Demonstrates: MULS, SUBQ, BNE loop
+
+        ORG     $4000
+
+START:  MOVEQ   #5,D0               ; n = 5
+        MOVEQ   #1,D1               ; result = 1
+
+FACT:   MULS    D0,D1               ; result = result * n
+        SUBQ    #1,D0               ; n = n - 1
+        BNE     FACT                ; if n != 0, repeat
+
+        ; D1 = 120
+        MOVE.L  D1,D1               ; already in D1
+        MOVEQ   #5,D0               ; print D1 as decimal
+        TRAP    #15
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '4. GCD Euclid',
+    code: `; ===== GCD(48,18) = 6  (Euclidean algorithm) =====
+; Demonstrates: CMP, BEQ, BGT, SUB, BRA
+;
+; Algorithm: while a != b:
+;             if a > b: a = a - b
+;             else:     b = b - a
+
+        ORG     $4000
+
+START:  MOVE.L  #48,D0              ; a = 48
+        MOVE.L  #18,D1              ; b = 18
+
+GCD:    CMP     D1,D0               ; compare a, b
+        BEQ     DONE                ; if a == b, we're done
+        BGT     SUBAB               ; if a > b, go to a=a-b
+        SUB     D0,D1               ; else b = b - a
+        BRA     GCD                 ; repeat
+SUBAB:  SUB     D1,D0               ; a = a - b
+        BRA     GCD                 ; repeat
+
+DONE:   MOVE.L  D0,D1               ; result = a (or b, they're equal)
+        MOVEQ   #5,D0               ; print as decimal
+        TRAP    #15                 ; output: "6"
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '5. Prime Check',
+    code: `; ===== Check if 17 is prime =====
+; Demonstrates: DIVU, SWAP (get remainder), BCS (branch if carry set)
+;
+; Prime test: try dividing n by 2,3,4,... up to n-1
+; If any division has remainder 0, n is not prime.
+; 17 is prime → output: "1"
+
+        ORG     $4000
+
+START:  MOVE.L  #17,D2              ; n = 17 (number to check)
+        CMPI    #2,D2               ; n < 2?
+        BLT     NOTPRIME            ; yes → not prime
+        MOVEQ   #2,D3               ; i = 2 (first divisor to try)
+
+LOOP:   MOVE.L  D2,D1               ; D1 = n
+        DIVU    D3,D1               ; D1 = n / i  (remainder in upper 16 bits)
+        SWAP    D1                  ; swap halves → D1.L now = remainder
+        TST     D1                  ; test remainder
+        BEQ     NOTPRIME            ; if remainder == 0, not prime
+        ADDQ    #1,D3               ; i++
+        CMP     D2,D3               ; i < n ?
+        BCS     LOOP                ; yes → continue trying divisors
+
+        ; if we get here, no divisor worked → prime
+        MOVEQ   #1,D1               ; D1 = 1 (prime)
+        BRA     DONE
+
+NOTPRIME:
+        MOVEQ   #0,D1               ; D1 = 0 (not prime)
+
+DONE:   MOVEQ   #5,D0               ; print D1 as decimal
+        TRAP    #15                 ; output: "1"
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '6. Bubble Sort',
+    code: `; ===== Bubble sort [5,3,8,1,2] → 1,2,3,5,8 =====
+; Demonstrates: JSR/RTS (subroutines), LEA, addressing modes
+; Algorithm: n-1 passes, each pass bubbles largest to end
+
+        ORG     $4000
+
+START:  JSR     SORT                ; call sort routine
+
+        LEA     DATA,A0             ; A0 = pointer to sorted data
+        MOVEQ   #5,D4               ; D4 = 5 elements to print
+
+PRINT:  MOVE.B  (A0)+,D1            ; load byte, advance pointer
+        ANDI    #$FF,D1             ; zero-extend byte to word
+        MOVEQ   #4,D0               ; print D1.W as decimal
+        TRAP    #15
+        SUBQ    #1,D4
+        BNE     PRINT               ; repeat 5 times
+
+DONE:   MOVEQ   #0,D0               ; halt
+        TRAP    #15
+
+; --- Bubble Sort Subroutine ---
+SORT:   MOVEQ   #4,D0               ; outer loop: 4 passes (n-1)
+
+OUTER:  LEA     DATA,A0             ; reset pointer to array start
+        MOVE.L  D0,D1               ; D1 = inner loop count
+        BRA     INNER_E             ; enter inner loop
+
+INNER:  MOVE.B  (A0),D2             ; load A[i]
+        MOVE.B  1(A0),D3            ; load A[i+1]
+        CMP     D3,D2               ; compare
+        BLE     NOSWAP              ; if A[i] <= A[i+1], skip
+        MOVE.B  D3,(A0)             ; swap: A[i] = A[i+1]
+        MOVE.B  D2,1(A0)            ; swap: A[i+1] = A[i]
+
+NOSWAP: ADDQ    #1,A0               ; advance pointer
+INNER_E:SUBQ    #1,D1
+        BNE     INNER               ; inner loop
+        SUBQ    #1,D0
+        BNE     OUTER               ; outer loop
+        RTS
+
+DATA:   DC.B    5,3,8,1,2           ; source array (5 bytes)
+
+        END     START` },
+  {
+    name: '7. String Copy',
+    code: `; ===== String copy + print =====
+; Demonstrates: LEA, postincrement (An)+, TRAP #15 func 2
+; Copies SRC to DST, then prints the copy
+
+        ORG     $4000
+
+START:  LEA     SRC,A0              ; A0 = source address
+        LEA     DST,A1              ; A1 = destination address
+
+COPY:   MOVE.B  (A0)+,(A1)+         ; copy one byte, advance both ptrs
+        BNE     COPY                ; if byte != 0, continue
+                                    ; (the null terminator IS copied, then loop stops)
+
+        MOVEQ   #2,D0               ; function 2 = print null-terminated
+        LEA     DST,A1              ;    string at A1
+        TRAP    #15                 ; output: "Hello, Motorola 68K!"
+
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+
+SRC:    DC.B    'Hello, Motorola 68K!',0    ; source string
+DST:    DS.B    64                  ; reserve 64 bytes for destination
+
+        END     START` },
+  {
+    name: '8. Mul (shift-add)',
+    code: `; ===== 13 x 7 = 91 via shift-and-add =====
+; Demonstrates: LSR (extract bits), BCC (check carry), LSL
+; Algorithm: multiply by shifting multiplier right,
+;            adding multiplicand when the shifted-out bit is 1
+
+        ORG     $4000
+
+START:  MOVEQ   #13,D0              ; multiplicand (A)
+        MOVEQ   #7,D1               ; multiplier (B)
+        MOVEQ   #0,D2               ; result = 0
+
+MULT:   LSR     #1,D1               ; shift B right: bit 0 → carry
+        BCC     SKIP                ; if carry=0, bit was 0: skip add
+        ADD     D0,D2               ; result += A
+SKIP:   LSL     #1,D0               ; A = A * 2
+        TST     D1                  ; B == 0?
+        BNE     MULT                ; no: continue
+
+        MOVE.L  D2,D1               ; result to D1
+        MOVEQ   #5,D0               ; print as decimal
+        TRAP    #15                 ; output: "91"
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '9. Bit Operations',
+    code: `; ===== Bit manipulation: BTST, BSET, BCLR, BCHG, ROL, ROR =====
+; Demonstrates: all bit-test/modify instructions and rotates
+
+        ORG     $4000
+
+START:  MOVE.L  #$1234ABCD,D0       ; test value
+        ; $ABCD = 1010 1011 1100 1101
+
+        BTST    #0,D0               ; test bit 0 → should be 1 (D is 1101)
+        BNE     BIT_SET             ; Z=0 means bit is set → skip
+        MOVEQ   #0,D0               ; (not reached)
+
+BIT_SET:
+        ROL.L   #4,D0               ; rotate left 4 bits
+        ; $1234ABCD → $234ABCD1
+
+        ROR.L   #8,D0               ; rotate right 8 bits
+        ; $234ABCD1 → $D1234ABC
+
+        BCHG    #0,D0               ; toggle bit 0
+        BSET    #4,D0               ; set bit 4 (= 1)
+        BCLR    #8,D0               ; clear bit 8 (= 0)
+
+        MOVE.L  D0,D1               ; D1 = modified value
+        MOVEQ   #3,D0               ; function 3 = print D1.L as hex
+        TRAP    #15                 ; output: modified hex value
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '10. Recursive Fac',
+    code: `; ===== Recursive factorial: 5! = 120 =====
+; Demonstrates: JSR/RTS for recursion, stack operations
+; Each call pushes its n to the stack, recurses, then pops and multiplies
+;
+; FAC(0) = FAC(1) = 1
+; FAC(n) = n * FAC(n-1)
+
+        ORG     $4000
+
+START:  MOVEQ   #5,D0               ; compute 5!
+        JSR     FACT                ; call factorial
+        MOVE.L  D0,D1               ; result to D1 for output
+        MOVEQ   #5,D0               ; print decimal
+        TRAP    #15                 ; output: "120"
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+
+FACT:   CMPI    #1,D0               ; n <= 1?
+        BGT     REC                 ; no: go to recursive case
+        MOVEQ   #1,D0               ; base case: return 1
+        RTS
+
+REC:    MOVE.L  D0,-(A7)            ; push current n onto stack
+        SUBQ    #1,D0               ; D0 = n - 1
+        JSR     FACT                ; compute FAC(n-1)
+        MOVE.L  (A7)+,D1            ; pop original n into D1
+        MULS    D1,D0               ; D0 = n * FAC(n-1)
+        RTS                         ; return result in D0
+
+        END     START` },
+  {
+    name: '11. Count 1-Bits',
+    code: `; ===== Count set bits (popcount) of $DEADBEEF = 24 =====
+; Demonstrates: LSL to shift out bits, BCC to check carry
+; Algorithm: shift left 32 times, count how many times
+;            the MSB (shifted into carry) was 1
+
+        ORG     $4000
+
+START:  MOVE.L  #$DEADBEEF,D0       ; test value (has 24 ones)
+        MOVEQ   #0,D1               ; bit count = 0
+        MOVEQ   #32,D2              ; loop 32 times
+
+LOOP:   LSL     #1,D0               ; shift left: MSB → C flag
+        BCC     NOCARRY             ; if carry = 0, skip
+        ADDQ    #1,D1               ; count this bit
+NOCARRY:SUBQ    #1,D2               ; decrement loop counter
+        BNE     LOOP
+
+        MOVEQ   #5,D0               ; print count as decimal
+        TRAP    #15                 ; output: "24"
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '12. SETcc Demo',
+    code: `; ===== SETcc: set byte according to condition codes =====
+; Demonstrates: SGT, SEQ, SNE, SLT
+; Each SETcc instruction writes $FF (true) or $00 (false) to a destination
+; based on the current flags (N,Z,V,C in Status Register)
+
+        ORG     $4000
+
+START:  MOVEQ   #5,D0               ; first operand
+        MOVEQ   #3,D1               ; second operand
+        CMP     D1,D0               ; compare 5 with 3
+        ; Flags after CMP: N=0, Z=0, V=0, C=0  (5 > 3)
+
+        SGT     D2                  ; D2 = $FF  (Greater Than: true!)
+        SEQ     D3                  ; D3 = $00  (EQual: false)
+        SNE     D4                  ; D4 = $FF  (Not Equal: true!)
+        SLT     D5                  ; D5 = $00  (Less Than: false)
+
+        ; Print D2 as confirmation (should be 255 = $FF)
+        ANDI    #$FF,D2             ; mask to byte
+        MOVE.L  D2,D1
+        MOVEQ   #5,D0               ; print decimal
+        TRAP    #15                 ; output: "255"
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '13. Display (XOR pattern)',
+    code: `; ===== XOR pattern on display ($FF0000) =====
+; Display is a 256 x 256 pixel framebuffer at $FF0000
+; Each byte = 1 pixel grayscale (0=black, 255=white)
+; Pixel(x,y) address = $FF0000 + y*256 + x
+;
+; Pattern: pixel = (x XOR y) + x   (moiré effect)
+
+        ORG     $4000
+
+START:  LEA     $FF0000,A0          ; A0 = display buffer base
+
+        MOVEQ   #0,D4               ; y = 0
+
+ROW:    MOVEQ   #0,D5               ; x = 0
+
+COL:    MOVE.L  D5,D0               ; D0 = x
+        EOR     D4,D0               ; D0 = x XOR y
+        ADD     D5,D0               ; D0 = (x^y) + x
+        MOVE.B  D0,(A0)+            ; write pixel, advance A0 (postincrement)
+        ADDQ    #1,D5               ; x++
+        CMPI    #256,D5             ; x < 256?
+        BNE     COL
+
+        ADDQ    #1,D4               ; y++
+        CMPI    #256,D4             ; y < 256?
+        BNE     ROW
+
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '14. Display (Plasma)',
+    code: `; ===== Plasma pattern on display ($FF0000) =====
+; Pattern: pixel = (x*x + y*y) >> 6
+; Creates concentric arc-like bands
+
+        ORG     $4000
+
+START:  LEA     $FF0000,A0          ; A0 = display buffer
+
+        MOVEQ   #0,D4               ; y = 0
+
+ROW:    MOVEQ   #0,D5               ; x = 0
+
+COL:    MOVE.L  D5,D0               ; D0 = x
+        MULS    D5,D0               ; D0 = x^2  (low 16 bits of product)
+        LSR     #6,D0               ; scale down: x^2 / 64
+
+        MOVE.L  D4,D1               ; D1 = y
+        MULS    D4,D1               ; D1 = y^2
+        LSR     #6,D1               ; scale down: y^2 / 64
+
+        ADD     D1,D0               ; D0 = (x^2 + y^2) / 64
+        MOVE.B  D0,(A0)+            ; write pixel
+        ADDQ    #1,D5               ; x++
+        CMPI    #256,D5
+        BNE     COL
+
+        ADDQ    #1,D4               ; y++
+        CMPI    #256,D4
+        BNE     ROW
+
+        MOVEQ   #0,D0               ; halt
+        TRAP    #15
+        END     START` },
+  {
+    name: '15. Input Move Dot',
+    code: `; ===== Move a white dot with D-Pad (polling) =====
+; Memory-mapped I/O:
+;   Display: $FF0000 - $FFFFFF  (64KB, 256x256 pixels)
+;   Input:   $FE0000-$FE0003    (Up/Down/Left/Right, 1=pressed)
+;
+; Algorithm: each frame, save old pos, read input, draw new pos, erase old
+; Handles clamping to screen edges (0-255)
+
+        ORG     $4000
+
+START:  MOVE.L  #128,D2             ; x = 128 (screen center)
+        MOVE.L  #128,D3             ; y = 128
+        MOVEQ   #$FF,D4             ; white pixel value
+        MOVEQ   #0,D5               ; black pixel (for erasing)
+
+        JSR     FILL_BLK            ; fill screen with black
+        JSR     DRAW                ; draw initial white dot
+
+LOOP:   ; --- Save old position ---
+        MOVE.L  D2,D6               ; old_x = current x
+        MOVE.L  D3,D7               ; old_y = current y
+
+        ; --- Read D-Pad (polled I/O at $FE0000-$FE0003) ---
+        TST.B   $FE0000             ; Up pressed?
+        BEQ     CK_DN
+        TST     D3                  ; already at top?
+        BEQ     CK_DN
+        SUBQ    #1,D3               ; y--
+
+CK_DN:  TST.B   $FE0001             ; Down pressed?
+        BEQ     CK_LT
+        CMPI    #255,D3             ; at bottom?
+        BEQ     CK_LT
+        ADDQ    #1,D3               ; y++
+
+CK_LT:  TST.B   $FE0002             ; Left pressed?
+        BEQ     CK_RT
+        TST     D2                  ; at left edge?
+        BEQ     CK_RT
+        SUBQ    #1,D2               ; x--
+
+CK_RT:  TST.B   $FE0003             ; Right pressed?
+        BEQ     NOCHG
+        CMPI    #255,D2             ; at right edge?
+        BEQ     NOCHG
+        ADDQ    #1,D2               ; x++
+
+        ; --- If position unchanged, skip redraw ---
+NOCHG:  CMP.L   D6,D2               ; compare new_x vs old_x
+        BNE     REDRAW
+        CMP.L   D7,D3               ; compare new_y vs old_y
+        BNE     REDRAW
+        BRA     LOOP                ; no change → loop back
+
+        ; --- Redraw: draw at new pos, erase old pos ---
+REDRAW: JSR     DRAW                ; plot white pixel at (x,y)
+        MOVE.L  D2,-(A7)            ; push new_x
+        MOVE.L  D3,-(A7)            ; push new_y
+        MOVE.L  D6,D2               ; swap to old_x
+        MOVE.L  D7,D3               ; swap to old_y
+        JSR     ERASE               ; plot black pixel at old pos
+        MOVE.L  (A7)+,D3            ; pop new_y
+        MOVE.L  (A7)+,D2            ; pop new_x
+        BRA     LOOP
+
+; --- Plot white pixel at (D2, D3) ---
+DRAW:   LEA     $FF0000,A0
+        MOVE.L  D3,D0
+        LSL     #8,D0               ; D0 = y * 256
+        ADD     D2,D0               ; D0 = y*256 + x
+        ADDA.L  D0,A0               ; A0 = $FF0000 + offset
+        MOVE.B  D4,(A0)             ; write white
+        RTS
+
+; --- Plot black pixel at (D2, D3) ---
+ERASE:  LEA     $FF0000,A0
+        MOVE.L  D3,D0
+        LSL     #8,D0
+        ADD     D2,D0
+        ADDA.L  D0,A0
+        MOVE.B  D5,(A0)             ; write black
+        RTS
+
+; --- Fill display buffer with black ---
+; Uses CLR.L (clear longword) to write 4 bytes at a time
+FILL_BLK:LEA   $FF0000,A0
+        MOVE.L  #16384,D0           ; 16384 longwords = 65536 bytes
+FILL_LP:CLR.L  (A0)+                ; *(A0) = 0, then A0 += 4
+        SUBQ    #1,D0
+        BNE     FILL_LP
+        RTS
+
+        END     START` },
+  {
+    name: '16. Interrupt (VBlank ISR)',
+    code: `; ===============================================================
+; 68K Interrupt System — Complete Tutorial
+; ===============================================================
+;
+; ■ Interrupt Levels & Autovectors
+;   Level 1 ($064): D-Pad方向键    (InputPanel 按下触发)
+;   Level 2 ($068): 键盘/A,B按钮   (keydown / InputPanel)
+;   Level 3 ($06C): VBlank ~60Hz   (composable 每帧自动发射)
+;   Level 4 ($070): 用户定义       cpu.requestInterrupt(4)
+;   Level 5 ($074): 用户定义       cpu.requestInterrupt(5)
+;   Level 6 ($078): 用户定义       cpu.requestInterrupt(6)
+;   Level 7 ($07C): NMI 不可屏蔽   (任何中断源都可触发)
+;
+; ■ Interrupt Flow (CPU hardware)
+;   1. CPU checks: pendingIrq > SR interrupt-mask (bits 8-10)
+;   2. Saves state:  push PC (4 bytes), push SR (2 bytes)
+;   3. mask = current level
+;   4. Reads vector from table → jumps to handler
+;   5. Handler runs ... ends with RTE
+;   6. RTE restores:  pop SR, pop PC → resumes original code
+;
+; ■ ISR Rules
+;   • Only save registers that the ISR CLOBBERS.
+;     (If you save D2 and then modify D2 in the ISR,
+;      your change will be lost when you pop the old D2 back!)
+;   • RTE pops SR and PC only.  Data registers are NOT restored.
+;   • Keep ISRs SHORT.  Long ISRs block other interrupts.
+;   • For nested interrupts: temporarily lower the mask via SR.
+;
+; ===============================================================
+; This demo: VBlank ISR moves a dot.  Keyboard ISR changes color.
+; ===============================================================
+
+        ORG     $4000
+
+START:
+        ; --- Install TWO interrupt vectors ---
+        ; Level 2 (keyboard) → KBD_ISR
+        ; Level 3 (VBlank)   → VB_ISR
+        MOVE.L  #KBD_ISR, $068
+        MOVE.L  #VB_ISR,  $06C
+
+        ; --- Clear display to black ---
+        JSR     FILL_BLK
+
+        ; --- Initial state for the dot ---
+        MOVE.L  #128,D2             ; x = center
+        MOVE.L  #128,D3             ; y = center
+        MOVEQ   #$FF,D4             ; pixel color (starts white)
+        MOVEQ   #0,D6               ; color step counter
+
+        JSR     DRAW                ; show initial dot
+
+; ===== Main loop: just spin =====
+; All real work happens in the ISRs below.
+; VBlank fires 60/sec → redraws dot.
+; Keyboard fires on key press → toggles color.
+MAIN:   BRA     MAIN
+
+; ===============================================================
+; Level 2 ISR  —  Keyboard / Button Interrupt
+; ===============================================================
+; Fires when you press any keyboard key or the A/B buttons.
+; Cycles the pixel color through 4 shades: white→gray→dark→black→white...
+;
+KBD_ISR:
+        ; No registers to save here — we don't call any subroutines
+        ; that clobber things, just simple arithmetic.
+
+        ADDQ    #1,D6               ; increment color step
+        ANDI    #3,D6               ; wrap to 0..3
+
+        ; Map step → color value
+        MOVEQ   #$FF,D4             ; default: white
+        TST     D6
+        BEQ     .done               ; step 0 → white ($FF)
+        MOVEQ   #$80,D4             ; step 1 → gray
+        CMPI    #1,D6
+        BEQ     .done
+        MOVEQ   #$40,D4             ; step 2 → dark gray
+        CMPI    #2,D6
+        BEQ     .done
+        MOVEQ   #$10,D4             ; step 3 → near-black
+
+.done:  RTE
+
+; ===============================================================
+; Level 3 ISR  —  VBlank Interrupt (~60 Hz)
+; ===============================================================
+; Fires every animation frame while Run is active.
+; Reads D-Pad input, moves the dot, redraws it.
+;
+; Registers used: A0, D0 (by DRAW subroutine — must save!)
+; Registers modified: D2, D3 (these are the dot position; must NOT save!)
+;
+VB_ISR:
+        ; Save scratch registers that DRAW will overwrite
+        MOVE.L  A0,-(A7)
+        MOVE.L  D0,-(A7)
+
+        ; --- Read D-Pad (memory-mapped I/O at $FE0000-$FE0003) ---
+        TST.B   $FE0000             ; Up?
+        BEQ     .1
+        TST     D3
+        BEQ     .1
+        SUBQ    #1,D3
+.1:     TST.B   $FE0001             ; Down?
+        BEQ     .2
+        CMPI    #255,D3
+        BEQ     .2
+        ADDQ    #1,D3
+.2:     TST.B   $FE0002             ; Left?
+        BEQ     .3
+        TST     D2
+        BEQ     .3
+        SUBQ    #1,D2
+.3:     TST.B   $FE0003             ; Right?
+        BEQ     .draw
+        CMPI    #255,D2
+        BEQ     .draw
+        ADDQ    #1,D2
+
+.draw:  JSR     DRAW                ; redraw at current (x,y) with D4 color
+
+        ; Restore scratch registers
+        MOVE.L  (A7)+,D0
+        MOVE.L  (A7)+,A0
+        RTE
+
+; ===============================================================
+; Subroutine: draw pixel at (D2,D3) with color D4
+; Clobbers: A0, D0  (caller must save/restore if needed)
+; ===============================================================
+DRAW:   LEA     $FF0000,A0
+        MOVE.L  D3,D0
+        LSL     #8,D0               ; y * 256
+        ADD     D2,D0               ; + x
+        ADDA.L  D0,A0               ; A0 = $FF0000 + y*256 + x
+        MOVE.B  D4,(A0)             ; write pixel
+        RTS
+
+; ===============================================================
+; Clear entire display (16384 longwords = 65536 bytes)
+; ===============================================================
+FILL_BLK:LEA   $FF0000,A0
+        MOVE.L  #16384,D0
+.L:     CLR.L   (A0)+                ; sets 4 bytes to 0, then A0+=4
+        SUBQ    #1,D0
+        BNE     .L
+        RTS
+
+        END     START` },
 ]
 
 const selectedExample = ref('')

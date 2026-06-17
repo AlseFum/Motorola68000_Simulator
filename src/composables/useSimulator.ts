@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { M68K, Assembler } from '../simulator'
 import type { CPUSnapshot, SimulatorState, Instruction } from '../simulator'
 
@@ -12,6 +12,18 @@ export function useSimulator() {
   const currentLine = ref<number>(-1)
   const instructions = ref<Instruction[]>([])
   let runRaf = 0
+
+  // Keyboard interrupt at level 2
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+    cpu.requestInterrupt(2)
+  }
+  onMounted(() => {
+    document.addEventListener('keydown', onKeyDown)
+  })
+  onUnmounted(() => {
+    document.removeEventListener('keydown', onKeyDown)
+  })
 
   function updateSnapshot(): void {
     Object.assign(snapshot, cpu.snapshot())
@@ -61,6 +73,8 @@ export function useSimulator() {
       cpu.state = 'running'
       if (!cpu.step()) { updateSnapshot(); return }
     }
+    // Fire VBlank interrupt each frame (~60Hz)
+    cpu.requestInterrupt(3)
     updateSnapshot()
     runRaf = requestAnimationFrame(runLoop)
   }
@@ -110,8 +124,12 @@ export function useSimulator() {
     updateSnapshot()
   }
 
+  function irq(level: number): void {
+    cpu.requestInterrupt(level)
+  }
+
   return {
     cpu, assembler, snapshot, state, output, errors, currentLine, instructions,
-    assemble, step, run, stop, reset, toggleBreakpoint, setRegistry, updateSnapshot, runToLine
+    assemble, step, run, stop, reset, toggleBreakpoint, setRegistry, updateSnapshot, runToLine, irq
   }
 }
