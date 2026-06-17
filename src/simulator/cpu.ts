@@ -384,6 +384,7 @@ export class M68K {
       else if (call === 4) c.output += (c.d[1] & 0xFFFF).toString()
       else if (call === 5) c.output += (c.d[1] >>> 0).toString()
       else if (call === 6) c.output += String.fromCharCode(c.d[1] & 0xFF) + String.fromCharCode((c.d[1] >> 8) & 0xFF) + String.fromCharCode((c.d[1] >> 16) & 0xFF) + String.fromCharCode(((c.d[1] >>> 24)) & 0xFF)
+      else if (call === 7) c.memory.displayBuf.fill(0)
       return
     }
     c._halt = true; c.output += '\n=== TRAP #' + vec + ' ===\n'

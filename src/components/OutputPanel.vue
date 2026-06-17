@@ -67,5 +67,12 @@ watch(() => props.text, async () => {
   word-break: break-all;
   color: #d4d4d4;
   line-height: 1.4;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 767px) {
+  .output-panel { font-size: 11px; padding: 4px 6px; }
+  .panel-header { font-size: 10px; margin-bottom: 2px; }
+  .clear-btn { font-size: 10px; padding: 3px 8px; min-height: 28px; }
 }
 </style>

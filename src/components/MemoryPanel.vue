@@ -67,7 +67,7 @@ function onWheel(e: WheelEvent) {
 .addr-input:focus { border-color:#0e639c }
 .btn-page { padding:0 4px; font-size:10px; line-height:15px; background:#3c3c3c; border:1px solid #555; color:#ccc; border-radius:2px; cursor:pointer }
 .btn-page:hover { background:#505050 }
-.mem-scroll { flex:1; overflow:auto; min-height:0 }
+.mem-scroll { flex:1; overflow:auto; min-height:0; -webkit-overflow-scrolling: touch }
 .mem-row { display:flex; gap:6px; padding:0; align-items:center; height:15px; line-height:15px; white-space:nowrap }
 .mem-addr { color:#808080; width:44px; min-width:44px; font-size:10px; flex-shrink:0 }
 .mem-hex { display:flex; gap:0; width:190px; min-width:190px; flex-shrink:0 }
@@ -75,4 +75,13 @@ function onWheel(e: WheelEvent) {
 .mem-byte:nth-child(8) { margin-right:2px }
 .mem-byte.hl { background:#0e639c; color:#fff; border-radius:1px }
 .mem-ascii { color:#6a9955; font-size:10px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+
+@media (max-width: 767px) {
+  .memory-panel { font-size:9px; padding:2px 4px; }
+  .panel-header { font-size:9px; }
+  .addr-input { width:66px; font-size:9px; }
+  .btn-page { padding:1px 6px; font-size:10px; min-height:22px; }
+  .mem-row { height:18px; line-height:18px; }
+  .mem-byte { font-size:9px; }
+}
 </style>

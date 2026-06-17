@@ -114,6 +114,48 @@ function fmt(v: number, pad: number = 8): string {
   background: #0e639c;
   color: #4ec9b0;
 }
+
+/* Mobile: compact horizontal layout */
+@media (max-width: 767px) {
+  .register-panel {
+    border-right: none;
+    font-size: 10px;
+    padding: 4px 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    height: auto;
+  }
+  .panel-header {
+    display: inline-block;
+    font-size: 9px;
+    margin-right: 6px;
+    margin-bottom: 0;
+    border-bottom: none;
+    vertical-align: middle;
+  }
+  .reg-grid {
+    display: inline-flex;
+    flex-direction: row;
+    gap: 0;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .reg-row {
+    padding: 1px 3px;
+    gap: 2px;
+  }
+  .reg-name { width: auto; font-size: 10px; }
+  .reg-val { font-size: 10px; }
+  .flags-row {
+    display: inline-flex;
+    gap: 4px;
+    padding: 0 4px;
+    vertical-align: middle;
+    align-items: center;
+  }
+  .flag { width: 20px; font-size: 10px; padding: 0 2px; }
+}
 @keyframes flash {
   0% { background: rgba(78, 201, 176, 0.3); }
   100% { background: transparent; }

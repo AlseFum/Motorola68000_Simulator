@@ -1,29 +1,29 @@
 <template>
-  <div class="control-bar">
+  <div class="control-bar" :class="{ compact: compact }">
     <div class="btn-group">
-      <button class="btn btn-assemble" @click="$emit('assemble')">
-        <span class="btn-icon">&#9881;</span> Assemble
+      <button class="btn btn-assemble" @click="$emit('assemble')" :title="compact ? 'Assemble' : undefined">
+        <span class="btn-icon">&#9881;</span><span v-if="!compact" class="btn-text">Assemble</span>
       </button>
-      <button class="btn btn-run" @click="$emit('run')" :disabled="!canRun && state !== 'running'">
-        <span class="btn-icon">{{ state === 'running' ? '&#9632;' : '&#9654;' }}</span> {{ state === 'running' ? 'Stop' : 'Run' }}
+      <button class="btn btn-run" @click="$emit('run')" :disabled="!canRun && state !== 'running'" :title="compact ? (state === 'running' ? 'Stop' : 'Run') : undefined">
+        <span class="btn-icon">{{ state === 'running' ? '&#9632;' : '&#9654;' }}</span><span v-if="!compact" class="btn-text">{{ state === 'running' ? 'Stop' : 'Run' }}</span>
       </button>
-      <button class="btn btn-step" @click="$emit('step')" :disabled="!canStep">
-        <span class="btn-icon">&#9654;|</span> Step
+      <button class="btn btn-step" @click="$emit('step')" :disabled="!canStep" :title="compact ? 'Step' : undefined">
+        <span class="btn-icon">&#9654;|</span><span v-if="!compact" class="btn-text">Step</span>
       </button>
-      <button class="btn btn-reset" @click="$emit('reset')">
-        <span class="btn-icon">&#8634;</span> Reset
+      <button class="btn btn-reset" @click="$emit('reset')" :title="compact ? 'Reset' : undefined">
+        <span class="btn-icon">&#8634;</span><span v-if="!compact" class="btn-text">Reset</span>
       </button>
     </div>
     <div class="examples">
-      <span class="examples-label">Examples:</span>
+      <span class="examples-label" v-if="!compact">Examples:</span>
       <select class="examples-select" @change="onSelect" :value="selected">
-        <option value="" disabled>-- Select an example --</option>
+        <option value="" disabled>{{ compact ? 'Examples' : '-- Select an example --' }}</option>
         <option v-for="ex in examples" :key="ex.name" :value="ex.name">{{ ex.name }}</option>
       </select>
     </div>
     <div class="status">
       <span class="status-dot" :class="statusClass"></span>
-      {{ state }}
+      <span v-if="!compact" class="status-text">{{ state }}</span>
     </div>
   </div>
 </template>
@@ -36,7 +36,7 @@ export interface Example {
   code: string
 }
 
-const props = defineProps<{ state: string; canRun: boolean; canStep: boolean; examples: Example[]; selected: string }>()
+const props = defineProps<{ state: string; canRun: boolean; canStep: boolean; examples: Example[]; selected: string; compact?: boolean }>()
 const emit = defineEmits<{ run: []; step: []; reset: []; assemble: []; selectExample: [string] }>()
 
 const statusClass = computed(() => ({
@@ -123,5 +123,24 @@ function onSelect(e: Event) {
 .dot-paused { background: #dcdcaa; }
 .dot-finished { background: #569cd6; }
 .dot-error { background: #f44747; }
+.status-text { white-space: nowrap; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* Compact (mobile) */
+.control-bar.compact {
+  padding: 4px 6px;
+  gap: 6px;
+  min-height: 36px;
+}
+.control-bar.compact .btn {
+  padding: 6px 8px;
+  font-size: 14px;
+  min-width: 32px;
+  justify-content: center;
+}
+.control-bar.compact .btn-icon { font-size: 14px; }
+.control-bar.compact .examples-select {
+  font-size: 11px;
+  max-width: 160px;
+}
 </style>

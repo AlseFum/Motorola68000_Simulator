@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Motorola 68K Simulator</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body, #app { height: 100%; width: 100%; overflow: hidden; }
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; touch-action: manipulation; -webkit-touch-callout: none; }
+    button { touch-action: manipulation; }
 
     /* custom scrollbar – dark theme */
     ::-webkit-scrollbar { width: 8px; height: 8px; }

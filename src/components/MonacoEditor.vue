@@ -14,7 +14,7 @@ self.MonacoEnvironment = {
   },
 }
 
-const props = defineProps<{ modelValue: string; highlightLine?: number }>()
+const props = defineProps<{ modelValue: string; highlightLine?: number; compact?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [string]; 'runToLine': [number] }>()
 
 const editorContainer = ref<HTMLElement>()
@@ -100,9 +100,12 @@ function initEditor() {
     value: props.modelValue,
     language: 'm68k',
     theme: 'm68k-dark',
-    fontSize: 13,
+    fontSize: props.compact ? 14 : 13,
     fontFamily: "'Consolas', 'Courier New', monospace",
-    lineNumbers: 'on',
+    lineNumbers: props.compact ? 'off' : 'on',
+    glyphMargin: !props.compact,
+    lineNumbersMinChars: props.compact ? 0 : 4,
+    folding: !props.compact,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     automaticLayout: true,
@@ -110,6 +113,14 @@ function initEditor() {
     renderWhitespace: 'selection',
     bracketPairColorization: { enabled: false },
     padding: { top: 4 },
+    wordWrap: props.compact ? 'on' : 'off',
+    overviewRulerBorder: false,
+    hideCursorInOverviewRuler: true,
+    overviewRulerLanes: 0,
+    scrollbar: {
+      vertical: props.compact ? 'hidden' : 'auto',
+      horizontal: props.compact ? 'hidden' : 'auto',
+    },
   })
 
   editor.onDidChangeModelContent(() => {

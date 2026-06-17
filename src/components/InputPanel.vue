@@ -181,4 +181,41 @@ function pUp(idx: number) {
   color: #555;
   margin-left: auto;
 }
+
+/* Mobile: bigger touch targets */
+@media (max-width: 767px) {
+  .input-panel {
+    padding: 8px 4px;
+  }
+  .panel-header { display: none; }
+  .input-body {
+    flex-direction: row;
+    gap: 12px;
+    justify-content: center;
+    align-items: center;
+  }
+  .dpad {
+    grid-template-columns: 48px 48px 48px;
+    grid-template-rows: 48px 48px 48px;
+    gap: 4px;
+  }
+  .dpad button {
+    font-size: 18px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-a, .btn-b {
+    width: 60px;
+    height: 60px;
+    font-size: 24px;
+    border-width: 3px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-a:active, .btn-b:active {
+    transform: scale(0.92);
+  }
+  .dpad button:active {
+    transform: scale(0.9);
+  }
+  .input-state { display: none; }
+}
 </style>

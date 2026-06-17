@@ -74,6 +74,7 @@ onUnmounted(() => { cancelAnimationFrame(rafId) })
 .display-canvas {
   max-width: 100%;
   max-height: 100%;
+  aspect-ratio: 1 / 1;
   image-rendering: pixelated;
   border: 1px solid #3c3c3c;
   background: #111;

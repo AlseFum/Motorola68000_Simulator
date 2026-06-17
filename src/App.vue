@@ -1,11 +1,12 @@
 <template>
-  <div class="app">
+  <div class="app" :class="{ mobile: isMobile }">
     <ControlBar
       :state="state"
       :canRun="canRun"
       :canStep="canStep"
       :examples="examples"
       :selected="selectedExample"
+      :compact="isMobile"
       @assemble="doAssemble"
       @step="doStep"
       @run="doRun"
@@ -13,27 +14,31 @@
       @selectExample="selectExample"
     />
 
-    <div class="main-layout" ref="layoutRef">
+    <!-- ===== Desktop layout ===== -->
+    <div v-if="!isMobile" class="main-layout" ref="layoutRef">
       <div class="left-panel" :style="{ width: leftW + 'px' }">
         <RegisterPanel :snapshot="snapshot" />
       </div>
       <div class="resize-handle" @mousedown="startDrag('left', $event)"></div>
-
       <div class="editor-area">
-        <div class="editor-pane">
-          <div class="pane-header">Editor</div>
-          <MonacoEditor v-model="code" :highlightLine="currentLine" @runToLine="doRunToLine" />
+        <div class="editor-tabs">
+          <button class="tab-btn" :class="{ active: editorTab === 'asm' }" @click="editorTab = 'asm'">ASM</button>
+          <button class="tab-btn" :class="{ active: editorTab === 'script' }" @click="editorTab = 'script'">Script</button>
+        </div>
+        <div class="editor-pane" v-show="editorTab === 'asm'">
+          <MonacoEditor v-model="code" :highlightLine="currentLine" :compact="false" @runToLine="doRunToLine" />
+        </div>
+        <div class="editor-pane" v-show="editorTab === 'script'">
+          <MonacoEditor v-model="scriptCode" :highlightLine="-1" :compact="false" />
         </div>
         <div v-if="errors.length > 0" class="errors-pane">
-          <div class="pane-header pane-header-error">Assembly Errors</div>
+          <div class="pane-header pane-header-error">{{ errors[0].startsWith('Line') ? 'Script Errors' : 'Assembly Errors' }}</div>
           <div class="error-list">
             <div v-for="(err, i) in errors" :key="i" class="error-item">{{ err }}</div>
           </div>
         </div>
       </div>
-
       <div class="resize-handle" @mousedown="startDrag('right', $event)"></div>
-
       <div class="right-panel" :style="{ width: rightW + 'px' }">
         <div class="right-tabs">
           <button class="tab-btn" :class="{ active: rightTab === 'mem' }" @click="rightTab = 'mem'">Memory</button>
@@ -51,6 +56,61 @@
         </div>
       </div>
     </div>
+
+    <!-- ===== Mobile layout ===== -->
+    <div v-else class="mobile-layout">
+      <!-- Tab content -->
+      <div class="mobile-content" v-show="mobileTab === 'code'">
+        <div class="mobile-editor-tabs">
+          <button class="m-tab-btn" :class="{ active: editorTab === 'asm' }" @click="editorTab = 'asm'">ASM</button>
+          <button class="m-tab-btn" :class="{ active: editorTab === 'script' }" @click="editorTab = 'script'">Script</button>
+        </div>
+        <div class="mobile-editor" v-show="editorTab === 'asm'">
+          <MonacoEditor v-model="code" :highlightLine="currentLine" :compact="true" @runToLine="doRunToLine" />
+        </div>
+        <div class="mobile-editor" v-show="editorTab === 'script'">
+          <MonacoEditor v-model="scriptCode" :highlightLine="-1" :compact="true" />
+        </div>
+        <div v-if="errors.length > 0" class="errors-pane">
+          <div class="pane-header pane-header-error">{{ errors[0].startsWith('Line') ? 'Script Errors' : 'Assembly Errors' }}</div>
+          <div class="error-list">
+            <div v-for="(err, i) in errors" :key="i" class="error-item">{{ err }}</div>
+          </div>
+        </div>
+        <div class="mobile-regs"><RegisterPanel :snapshot="snapshot" /></div>
+      </div>
+
+      <div class="mobile-content" v-show="mobileTab === 'game'">
+        <div class="mobile-game-layout">
+          <div class="mobile-display"><DisplayPanel :memory="memory" /></div>
+          <div class="mobile-input"><InputPanel :memory="memory" @irq="(l) => irq(l)" /></div>
+          <div class="mobile-regs-compact"><RegisterPanel :snapshot="snapshot" /></div>
+        </div>
+      </div>
+
+      <div class="mobile-content" v-show="mobileTab === 'debug'">
+        <div class="mobile-debug-layout">
+          <div class="mobile-memory"><MemoryPanel :memory="memory" :pc="snapshot.pc" /></div>
+          <div class="mobile-output"><OutputPanel :text="output" @clear="doClearOutput" /></div>
+        </div>
+      </div>
+
+      <!-- Bottom tab bar -->
+      <div class="mobile-tab-bar">
+        <button class="mobile-tab" :class="{ active: mobileTab === 'code' }" @click="mobileTab = 'code'">
+          <span class="m-tab-icon">&#9997;</span>
+          <span class="m-tab-label">Code</span>
+        </button>
+        <button class="mobile-tab" :class="{ active: mobileTab === 'game' }" @click="mobileTab = 'game'">
+          <span class="m-tab-icon">&#9638;</span>
+          <span class="m-tab-label">Game</span>
+        </button>
+        <button class="mobile-tab" :class="{ active: mobileTab === 'debug' }" @click="mobileTab = 'debug'">
+          <span class="m-tab-icon">&#9881;</span>
+          <span class="m-tab-label">Debug</span>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -64,6 +124,7 @@ import InputPanel from './components/InputPanel.vue'
 import OutputPanel from './components/OutputPanel.vue'
 import MonacoEditor from './components/MonacoEditor.vue'
 import { useSimulator } from './composables/useSimulator'
+import { ScriptCompiler } from './script/compiler'
 
 const {
   cpu, snapshot, state, output, errors, currentLine,
@@ -72,6 +133,15 @@ const {
 
 const memory = cpu.memory
 
+// --- Mobile detection ---
+const windowWidth = ref(window.innerWidth)
+function onResize() { windowWidth.value = window.innerWidth }
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => window.removeEventListener('resize', onResize))
+const isMobile = computed(() => windowWidth.value < 768)
+const mobileTab = ref<'code' | 'game' | 'debug'>('code')
+
+// --- Desktop panel sizing ---
 const layoutRef = ref<HTMLElement>()
 const leftW = ref(180)
 const rightW = ref(380)
@@ -108,6 +178,7 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', onMouseUp)
 })
 
+// --- Examples ---
 const examples: Example[] = [
   {
     name: '1. Sum 1 to 10',
@@ -116,6 +187,7 @@ const examples: Example[] = [
 ; TRAP #15 function table:
 ;   D0=0 halt, D0=1 print char, D0=2 print string
 ;   D0=3 print hex, D0=4 print word-decimal, D0=5 print long-decimal
+;   D0=6 print dword-ASCII, D0=7 clear display
 
         ORG     $4000               ; code starts at $4000
 
@@ -549,7 +621,8 @@ START:  MOVE.L  #128,D2             ; x = 128 (screen center)
         MOVEQ   #$FF,D4             ; white pixel value
         MOVEQ   #0,D5               ; black pixel (for erasing)
 
-        JSR     FILL_BLK            ; fill screen with black
+        MOVEQ   #7,D0               ; clear display
+        TRAP    #15
         JSR     DRAW                ; draw initial white dot
 
 LOOP:   ; --- Save old position ---
@@ -617,15 +690,6 @@ ERASE:  LEA     $FF0000,A0
         MOVE.B  D5,(A0)             ; write black
         RTS
 
-; --- Fill display buffer with black ---
-; Uses CLR.L (clear longword) to write 4 bytes at a time
-FILL_BLK:LEA   $FF0000,A0
-        MOVE.L  #16384,D0           ; 16384 longwords = 65536 bytes
-FILL_LP:CLR.L  (A0)+                ; *(A0) = 0, then A0 += 4
-        SUBQ    #1,D0
-        BNE     FILL_LP
-        RTS
-
         END     START` },
   {
     name: '16. Interrupt (VBlank ISR)',
@@ -672,7 +736,8 @@ START:
         MOVE.L  #VB_ISR,  $06C
 
         ; --- Clear display to black ---
-        JSR     FILL_BLK
+        MOVEQ   #7,D0
+        TRAP    #15
 
         ; --- Initial state for the dot ---
         MOVE.L  #128,D2             ; x = center
@@ -770,31 +835,194 @@ DRAW:   LEA     $FF0000,A0
         MOVE.B  D4,(A0)             ; write pixel
         RTS
 
-; ===============================================================
-; Clear entire display (16384 longwords = 65536 bytes)
-; ===============================================================
-FILL_BLK:LEA   $FF0000,A0
-        MOVE.L  #16384,D0
-.L:     CLR.L   (A0)+                ; sets 4 bytes to 0, then A0+=4
-        SUBQ    #1,D0
-        BNE     .L
-        RTS
-
         END     START` },
+
+  {
+    name: 'S4. Shoot-em-up',
+    code: `// ★ SHOOT-EM-UP ★ (VBlank ISR)
+// ← → move  A fire  B restart
+
+func plot(x, y, c) { poke(0xFF0000 + y*256 + x, c); }
+
+func draw_ship() {
+    plot(px-2, 229, 192); plot(px+2, 229, 192);
+    plot(px-1, 230, 255); plot(px, 230, 255); plot(px+1, 230, 255);
+    plot(px, 229, 255);
+}
+func erase_ship() {
+    plot(px-2, 229, 0); plot(px+2, 229, 0);
+    plot(px-1, 230, 0); plot(px, 230, 0); plot(px+1, 230, 0);
+    plot(px, 229, 0);
+}
+
+// HUD — lives as dots, score bar. Always draws 0 (black) for unused slots
+func draw_hud(s, l) {
+    if (l >= 1) { plot(4, 4, 255); } else { plot(4, 4, 0); }
+    if (l >= 2) { plot(10, 4, 255); } else { plot(10, 4, 0); }
+    if (l >= 3) { plot(16, 4, 255); } else { plot(16, 4, 0); }
+    var x = 0;
+    while (x < 40) { plot(250-x, 4, 0); x = x + 1; }
+    x = 0;
+    while (x < s && x < 40) { plot(250-x, 4, 128); x = x + 1; }
+}
+
+func onISR3() {
+    // 1. Erase sprites
+    erase_ship();
+    if (bu) { plot(bu & 255, bu >> 8, 0); }
+    if (en) {
+        plot(en & 255, en >> 8, 0); plot((en & 255)+1, en >> 8, 0);
+        plot(en & 255, (en >> 8)+1, 0); plot((en & 255)+1, (en >> 8)+1, 0);
+    }
+
+    // 2. Input
+    if (peek(0xFE0002) && px > 4)  { px = px - 4; }
+    if (peek(0xFE0003) && px < 250) { px = px + 4; }
+    if (peek(0xFE0004) && bu == 0) { bu = (226 << 8) | px; }
+    if (peek(0xFE0005)) { score = 0; lives = 3; bu = 0; en = 0; }
+
+    // 3. Random spawn (simple LCG)
+    seed = (seed * 13 + 7) & 255;
+    if (en == 0) { en = (8 << 8) | (seed + 8); }
+
+    // 4. Move enemy (+1 px/frame)
+    if (en) {
+        if ((en >> 8) > 247) { en = 0; lives = lives - 1; }
+        else { en = en + 256; }
+    }
+
+    // 5. Move bullet (-5 px/frame)
+    if (bu) {
+        if ((bu >> 8) < 9) { bu = 0; }
+        else { bu = bu - (5 << 8); }
+    }
+
+    // 6. Collision — 41x41 hitbox
+    if (bu && en) {
+        if ((bu & 255) >= (en & 255)-20 && (bu & 255) <= (en & 255)+21 &&
+            (bu >> 8) >= (en >> 8)-20 && (bu >> 8) <= (en >> 8)+21) {
+            score = score + 1;
+            plot(en & 255, en >> 8, 0); plot((en & 255)+1, en >> 8, 0);
+            plot(en & 255, (en >> 8)+1, 0); plot((en & 255)+1, (en >> 8)+1, 0);
+            en = 0; bu = 0;
+        }
+    }
+
+    // 7. Draw sprites
+    draw_ship();
+    if (bu) { plot(bu & 255, bu >> 8, 255); }
+    if (en) {
+        plot(en & 255, en >> 8, 192); plot((en & 255)+1, en >> 8, 192);
+        plot(en & 255, (en >> 8)+1, 192); plot((en & 255)+1, (en >> 8)+1, 192);
+    }
+
+    // 8. HUD
+    draw_hud(score, lives);
+    if (lives == 0) { halt(); }
+}
+
+var px = 128;
+var bu = 0;
+var en = 0;
+var score = 0;
+var lives = 3;
+var seed = 123;
+
+clear();
+while (1) {}
+` },
+
+  { name: 'S1. Script: Moving Dot', code: `// Moving dot — use D-Pad
+func draw(x, y, c) {
+    poke(0xFF0000 + y*256 + x, c);
+}
+
+var x = 128;
+var y = 128;
+while (1) {
+    if (peek(0xFE0002)) { x = x - 2; }
+    if (peek(0xFE0003)) { x = x + 2; }
+    if (peek(0xFE0000)) { y = y - 2; }
+    if (peek(0xFE0001)) { y = y + 2; }
+    draw(x, y, 255);
+}` },
+
+  { name: 'S2. Script: Enemies', code: `// Enemy game
+func pixel(x, y, c) {
+    poke(0xFF0000 + y*256 + x, c);
+}
+
+var px = 128;
+var ex = 80;
+var ey = 0;
+while (1) {
+    if (peek(0xFE0002)) { px = px - 4; }
+    if (peek(0xFE0003)) { px = px + 4; }
+    ey = ey + 2;
+    if (ey > 240) { ey = 0; }
+    pixel(px, 230, 255);
+    pixel(ex, ey, 180);
+}` },
+
+  { name: 'S3. Script: Interrupt', code: `// ISR-driven game via func onISR3
+func plot(x, y, c) {
+    poke(0xFF0000 + y*256 + x, c);
+}
+func onISR3() {
+    if (peek(0xFE0002)) { x = x - 4; }
+    if (peek(0xFE0003)) { x = x + 4; }
+    if (peek(0xFE0000)) { y = y - 4; }
+    if (peek(0xFE0001)) { y = y + 4; }
+    plot(x, y, 255);
+}
+var x = 128;
+var y = 128;
+while (1) {}` },
+
 ]
 
 const selectedExample = ref('')
 const rightTab = ref<'mem' | 'io'>('mem')
+const editorTab = ref<'asm' | 'script'>('asm')
 const code = ref(examples[0].code)
+const scriptCode = ref(`// Script language — see examples below
+// I/O addresses: $FE0000-$FE0005 = input
+//                $FF0000-$FFFFFF = display (256x256)
+//
+// Built-in: peek(addr) poke(addr,val) halt()
+// Special: func onISR1…onISR7() = auto-install interrupt vector
+`)
 
 function selectExample(name: string): void {
   selectedExample.value = name
   doReset()
   const ex = examples.find(e => e.name === name)
-  if (ex) code.value = ex.code
+  if (ex) {
+    if (ex.name.startsWith('S')) {
+      scriptCode.value = ex.code
+      editorTab.value = 'script'
+    } else {
+      code.value = ex.code
+    }
+  }
 }
 
-function doAssemble(): void { assemble(code.value) }
+function doAssemble(): void {
+  if (editorTab.value === 'script') {
+    const compiler = new ScriptCompiler()
+    const result = compiler.compile(scriptCode.value)
+    if (result.errors.length > 0) {
+      errors.value = result.errors
+      return
+    }
+    code.value = result.asm
+    editorTab.value = 'asm'
+    errors.value = []
+    assemble(result.asm)
+  } else {
+    assemble(code.value)
+  }
+}
 function doStep(): void { step() }
 function doRun(): void { run() }
 function doRunToLine(line: number): void { runToLine(line) }
@@ -811,6 +1039,7 @@ const canStep = computed(() => state.value === 'idle' || state.value === 'paused
 </script>
 
 <style scoped>
+/* ===== Shared ===== */
 .app {
   display: flex;
   flex-direction: column;
@@ -850,6 +1079,29 @@ const canStep = computed(() => state.value === 'idle' || state.value === 'paused
   min-width: 200px;
   border-right: 1px solid #3c3c3c;
 }
+.editor-tabs {
+  display: flex;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+.editor-tabs .tab-btn {
+  padding: 3px 14px;
+  font-size: 11px;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 2px solid transparent;
+}
+.editor-tabs .tab-btn.active {
+  color: #d4d4d4;
+  border-bottom-color: #0e639c;
+}
+.editor-tabs .tab-btn:hover { color: #ccc; }
 .editor-pane {
   flex: 1;
   display: flex;
@@ -907,4 +1159,119 @@ const canStep = computed(() => state.value === 'idle' || state.value === 'paused
 .io-display { flex: 1; overflow: hidden; min-height: 0; }
 .io-input { flex-shrink: 0; }
 .right-bottom { height: 200px; overflow: hidden; }
+
+/* ===== Mobile ===== */
+.mobile-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mobile-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Mobile editor tabs */
+.mobile-editor-tabs {
+  display: flex;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.m-tab-btn {
+  padding: 6px 16px;
+  font-size: 12px;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 2px solid transparent;
+}
+.m-tab-btn.active {
+  color: #d4d4d4;
+  border-bottom-color: #0e639c;
+}
+
+.mobile-editor { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.mobile-editor > :deep(.editor-wrapper) { flex: 1; }
+
+.mobile-regs {
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border-top: 1px solid #3c3c3c;
+}
+
+/* Game tab */
+.mobile-game-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mobile-display { flex: 1; min-height: 0; overflow: hidden; }
+.mobile-input { flex-shrink: 0; }
+.mobile-regs-compact {
+  flex-shrink: 0;
+  max-height: 130px;
+  overflow-y: auto;
+  border-top: 1px solid #3c3c3c;
+}
+
+/* Debug tab */
+.mobile-debug-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mobile-memory { flex: 1; min-height: 0; overflow: hidden; }
+.mobile-output { height: 120px; flex-shrink: 0; overflow: hidden; border-top: 1px solid #3c3c3c; }
+
+/* Bottom tab bar */
+.mobile-tab-bar {
+  display: flex;
+  background: #252526;
+  border-top: 1px solid #3c3c3c;
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.mobile-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px 8px;
+  border: none;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-tab.active {
+  color: #4ec9b0;
+}
+.mobile-tab.active::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 20%; right: 20%;
+  height: 2px;
+  background: #4ec9b0;
+  border-radius: 0 0 2px 2px;
+}
+.m-tab-icon { font-size: 18px; line-height: 1; }
+.m-tab-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
 </style>
