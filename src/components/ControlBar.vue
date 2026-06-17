@@ -4,8 +4,8 @@
       <button class="btn btn-assemble" @click="$emit('assemble')">
         <span class="btn-icon">&#9881;</span> Assemble
       </button>
-      <button class="btn btn-run" @click="$emit('run')" :disabled="!canRun">
-        <span class="btn-icon">&#9654;</span> Run
+      <button class="btn btn-run" @click="$emit('run')" :disabled="!canRun && state !== 'running'">
+        <span class="btn-icon">{{ state === 'running' ? '&#9632;' : '&#9654;' }}</span> {{ state === 'running' ? 'Stop' : 'Run' }}
       </button>
       <button class="btn btn-step" @click="$emit('step')" :disabled="!canStep">
         <span class="btn-icon">&#9654;|</span> Step

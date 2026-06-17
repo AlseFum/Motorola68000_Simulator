@@ -15,7 +15,7 @@ self.MonacoEnvironment = {
 }
 
 const props = defineProps<{ modelValue: string; highlightLine?: number }>()
-const emit = defineEmits<{ 'update:modelValue': [string] }>()
+const emit = defineEmits<{ 'update:modelValue': [string]; 'runToLine': [number] }>()
 
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
@@ -114,6 +114,17 @@ function initEditor() {
 
   editor.onDidChangeModelContent(() => {
     emit('update:modelValue', editor!.getValue())
+  })
+
+  editor.addAction({
+    id: 'run-to-here',
+    label: '▶ Run to Here',
+    contextMenuGroupId: 'navigation',
+    contextMenuOrder: 1.5,
+    run: (ed) => {
+      const pos = ed.getPosition()
+      if (pos) emit('runToLine', pos.lineNumber - 1)
+    },
   })
 }
 

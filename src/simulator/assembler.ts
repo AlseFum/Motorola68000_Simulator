@@ -100,33 +100,24 @@ export class Assembler {
   private instrSize(line: RawLine): number {
     const m = line.mnemonic!.toUpperCase(); const ops = line.operands || ''
     if (DATA_DIR.includes(m) || m === 'ORG' || m === 'END' || m === 'EQU') return 0
-    let words = 1
-    const parsed = this.parseOperands(ops, line.lineNum)
-    if (!parsed && m !== 'NOP' && m !== 'RTS' && m !== 'RTE' && m !== 'ILLEGAL' && !isBcc(m) && !(BRANCHES.includes(m)) && !isScc(m)) return -1
     if (IMMEDIATES.includes(m)) {
       if (m === 'MOVEQ') return 2
-      words += 1
-      if (parsed && parsed.length >= 2) {
-        const d = this.parseEA(parsed[1], line.lineNum); if (d && (d.t === 'disp' || d.t === 'pc' || d.t === 'idx')) words += 1
-      }
-      return words * 2
+      if (['BTST','BSET','BCLR','BCHG'].includes(m)) return 2
+      return 4  // opcode + immediate word
     }
     if (isScc(m) || m === 'TAS') return 2
     if (isDbcc(m)) return 4
     if (m === 'MOVEM') return 4
-    if (TRIPLES.includes(m) || DUALS.includes(m)) {
-      if (parsed) for (const op of parsed) {
-        const ea = this.parseEA(op, line.lineNum)
-        if (ea && (ea.t === 'disp' || ea.t === 'pc' || ea.t === 'idx')) words += 1
-        if (ea && ea.t === 'abs' && ea.disp! > 0xFFFF) words += 1
-      }
-    }
-    if (BRANCHES.includes(m) || isBcc(m)) { if (m === 'BRA' || m === 'BSR' || isBcc(m)) return 4 }
+    if (TRIPLES.includes(m) || DUALS.includes(m)) return 2
+    if (BRANCHES.includes(m) || isBcc(m)) return (m === 'BRA' || m === 'BSR' || isBcc(m)) ? 4 : 2
     if (m === 'STOP') return 4
     if (m === 'CHK') return 2
     if (m === 'LINK') return 4
-    if (m === 'BTST' && parsed && parsed[0].startsWith('#')) return 4
-    return words * 2
+    if (SINGLES.includes(m)) return 2
+    if (SHIFTS.includes(m)) return 2
+    if (QUICKS.includes(m)) return 2
+    if (SPECIAL.includes(m)) return 2
+    return 2  // default
   }
 
   private pass2(lines: RawLine[]): void {
@@ -140,44 +131,32 @@ export class Assembler {
       if (m === 'ORG') { addr = this.evalExpr(ops, line.lineNum) || addr; continue }
       if (m === 'END' || m === 'EQU') continue
 
-      // Data directives
-      if (DATA_DIR.includes(m)) {
-        const vals = this.parseDataVals(ops, line.lineNum)
-        const sz = m === 'DC.B' ? 1 : m === 'DC.W' ? 2 : 4
-        for (const v of vals) {
-          const words = sz === 4 ? [(v>>>16)&0xFFFF, v&0xFFFF] : [v & (sz === 1 ? 0xFF : 0xFFFF)]
-          this.instructions.push({ addr, mnemonic: m, size: sz as Size, words, byteSize: words.length * 2, imm: v, sourceLine: this.currentLineNum })
-          addr += sz
-        }
-        // DS.B/W/L are handled in pass1 only
-        continue
-      }
-
       const s = this.getSize(line)
+      const sz = this.instrSize(line)
       const parsed = this.parseOperands(ops, line.lineNum)
 
       // Single-arg no-operand instructions
-      if (m === 'NOP') { this.emit(addr, 'NOP', 1, [0x4E71]); addr += 2; continue }
-      if (m === 'RTS') { this.emit(addr, 'RTS', 1, [0x4E75]); addr += 2; continue }
-      if (m === 'RTE') { this.emit(addr, 'RTE', 1, [0x4E73]); addr += 2; continue }
-      if (m === 'HALT') { this.emit(addr, 'HALT', 1, [0x4E71]); addr += 2; continue }
-      if (m === 'ILLEGAL') { this.emit(addr, 'ILLEGAL', 1, [0x4AFC]); addr += 2; continue }
+      if (m === 'NOP') { this.emit(addr, 'NOP', 1, [0x4E71]); addr += sz; continue }
+      if (m === 'RTS') { this.emit(addr, 'RTS', 1, [0x4E75]); addr += sz; continue }
+      if (m === 'RTE') { this.emit(addr, 'RTE', 1, [0x4E73]); addr += sz; continue }
+      if (m === 'HALT') { this.emit(addr, 'HALT', 1, [0x4E71]); addr += sz; continue }
+      if (m === 'ILLEGAL') { this.emit(addr, 'ILLEGAL', 1, [0x4AFC]); addr += sz; continue }
       if (m === 'TRAP') {
         const vec = parseInt((ops || '#0').replace('#', '')) || 0
         this.emit(addr, 'TRAP', 1, [0x4E40 | (vec & 0xF)], { imm: vec & 0xF })
-        addr += 2; continue
+        addr += sz; continue
       }
       if (m === 'STOP') {
         const immVal = this.evalExpr((ops || '#0').replace('#', ''), line.lineNum)
         this.emit(addr, 'STOP', 1, [0x4E72, immVal & 0xFFFF], { imm: immVal & 0xFFFF })
-        addr += 4; continue
+        addr += sz; continue
       }
 
       // SWAP Dn
-      if (m === 'SWAP') { const d = this.parseEA(ops, line.lineNum); if (!d) { this.err(line, 'bad SWAP operand'); continue }; this.emit(addr, 'SWAP', 2, [0x4840 | d.reg], { dst: d }); addr += 2; continue }
+      if (m === 'SWAP') { const d = this.parseEA(ops, line.lineNum); if (!d) { this.err(line, 'bad SWAP operand'); continue }; this.emit(addr, 'SWAP', 2, [0x4840 | d.reg], { dst: d }); addr += sz; continue }
 
       // EXT Dn
-      if (m === 'EXT') { const d = this.parseEA(ops, line.lineNum); if (!d) { this.err(line, 'bad EXT operand'); continue }; this.emit(addr, 'EXT', s, [0x4880 | (s === 4 ? 0x40 : 0) | d.reg], { dst: d }); addr += 2; continue }
+      if (m === 'EXT') { const d = this.parseEA(ops, line.lineNum); if (!d) { this.err(line, 'bad EXT operand'); continue }; this.emit(addr, 'EXT', s, [0x4880 | (s === 4 ? 0x40 : 0) | d.reg], { dst: d }); addr += sz; continue }
 
       // MOVEQ
       if (m === 'MOVEQ') {
@@ -186,7 +165,7 @@ export class Assembler {
         const dst = this.parseEA(parsed[1], line.lineNum)
         if (!dst || dst.t !== 'dn') { this.err(line, 'MOVEQ dst must be Dn'); continue }
         this.emit(addr, 'MOVEQ', 4, [0x7000 | (dst.reg << 9) | (iv & 0xFF)], { dst, imm: iv })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // EXG
@@ -196,7 +175,7 @@ export class Assembler {
         if (!r1 || !r2) { this.err(line, 'bad EXG operands'); continue }
         let mode = 0; if (r1.t === 'dn' && r2.t === 'dn') mode = 0x08; else if (r1.t === 'an' && r2.t === 'an') mode = 0x09; else mode = 0x11
         this.emit(addr, 'EXG', 4, [0xC140 | (r1.reg << 9) | (mode << 3) | r2.reg], { dst: r1, imm: r2.reg | (mode << 3) })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // Scc
@@ -204,11 +183,11 @@ export class Assembler {
         const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad Scc operand'); continue }
         const cc = SCC_MNEM.indexOf(m)
         this.emit(addr, m, 1, [0x50C0 | (cc << 8)], { dst: ea, cond: cc })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // TAS
-      if (m === 'TAS') { const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad TAS operand'); continue }; this.emit(addr, 'TAS', 1, [0x4AC0], { dst: ea }); addr += 2; continue }
+      if (m === 'TAS') { const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad TAS operand'); continue }; this.emit(addr, 'TAS', 1, [0x4AC0], { dst: ea }); addr += sz; continue }
 
       // Immediate arithmetic
       if (IMMEDIATES.includes(m) && m !== 'MOVEQ') {
@@ -235,7 +214,7 @@ export class Assembler {
         else { cnt = 0; dst = this.parseEA(parsed[1], line.lineNum); /* cnt from Dn */ }
         if (!dst) { this.err(line, 'bad operand'); continue }
         this.emit(addr, m, s, [0xE000], { dst, imm: cnt })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // Branches: BRA, BSR, Bcc
@@ -246,7 +225,7 @@ export class Assembler {
         const w = m === 'BSR' ? 0x6100 : 0x6000 | ((cond >= 0 ? cond : 0) << 8)
         const disp = ta - (addr + 2)
         this.emit(addr, m, 1, [w, disp & 0xFFFF], { targetAddr: ta, imm: disp, cond: cond >= 0 ? cond : undefined })
-        addr += 4; continue
+        addr += sz; continue
       }
 
       // DBcc
@@ -257,14 +236,14 @@ export class Assembler {
         if (!dreg || ta < 0) { this.err(line, 'bad DBcc operands'); continue }
         const cc = DBC_MNEM.indexOf(m)
         this.emit(addr, m, 4, [0x50C8 | (cc << 8) | dreg.reg], { dst: dreg, cond: cc, targetAddr: ta })
-        addr += 4; continue
+        addr += sz; continue
       }
 
       // JSR / JMP
       if (m === 'JSR' || m === 'JMP') {
         const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad ' + m + ' operand'); continue }
         this.emit(addr, m, 1, [m === 'JSR' ? 0x4E80 : 0x4EC0], { src: ea })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // CHK
@@ -273,7 +252,7 @@ export class Assembler {
         const src = this.parseEA(parsed[0], line.lineNum); const dst = this.parseEA(parsed[1], line.lineNum)
         if (!src || !dst) { this.err(line, 'bad CHK operands'); continue }
         this.emit(addr, 'CHK', 2, [0x4180 | (dst.reg << 9)], { src, dst })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // CMPM
@@ -282,7 +261,7 @@ export class Assembler {
         const src = this.parseEA(parsed[0], line.lineNum); const dst = this.parseEA(parsed[1], line.lineNum)
         if (!src || !dst || src.t !== 'post' || dst.t !== 'post') { this.err(line, 'CMPM needs (An)+,(An)+'); continue }
         this.emit(addr, 'CMPM', s, [0xB108 | (dst.reg << 9) | src.reg], { src, dst })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // QUICK
@@ -291,7 +270,7 @@ export class Assembler {
         const val = parseInt(parsed[0].replace('#', '')) || 0
         const dst = this.parseEA(parsed[1], line.lineNum); if (!dst) { this.err(line, 'bad operand'); continue }
         this.emit(addr, m, s, [0x5000 | ((val & 7) << 9)], { dst, imm: val & 7 })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // LINK / UNLK
@@ -300,13 +279,13 @@ export class Assembler {
         const reg = this.parseEA(parsed[0], line.lineNum); const disp = this.evalExpr(parsed[1].replace('#', ''), line.lineNum)
         if (!reg) { this.err(line, 'bad LINK operands'); continue }
         this.emit(addr, 'LINK', 4, [0x4E50 | reg.reg], { dst: reg, imm: disp })
-        addr += 4; continue
+        addr += sz; continue
       }
-      if (m === 'UNLK') { const reg = this.parseEA(ops, line.lineNum); if (!reg) { this.err(line, 'bad UNLK operand'); continue }; this.emit(addr, 'UNLK', 4, [0x4E58 | reg.reg], { dst: reg }); addr += 2; continue }
+      if (m === 'UNLK') { const reg = this.parseEA(ops, line.lineNum); if (!reg) { this.err(line, 'bad UNLK operand'); continue }; this.emit(addr, 'UNLK', 4, [0x4E58 | reg.reg], { dst: reg }); addr += sz; continue }
 
       // MOVE SR/CCR
-      if (m === 'MOVE_SR') { const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad operand'); continue }; this.emit(addr, 'MOVE_SR', 2, [0x40C0], { dst: ea }); addr += 2; continue }
-      if (m === 'MOVE_CCR') { const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad operand'); continue }; this.emit(addr, 'MOVE_CCR', 1, [0x42C0], { dst: ea }); addr += 2; continue }
+      if (m === 'MOVE_SR') { const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad operand'); continue }; this.emit(addr, 'MOVE_SR', 2, [0x40C0], { dst: ea }); addr += sz; continue }
+      if (m === 'MOVE_CCR') { const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad operand'); continue }; this.emit(addr, 'MOVE_CCR', 1, [0x42C0], { dst: ea }); addr += sz; continue }
 
       // ADDX / SUBX / ABCD / SBCD
       if (['ADDX','SUBX','ABCD','SBCD'].includes(m)) {
@@ -315,14 +294,14 @@ export class Assembler {
         if (!src || !dst) { this.err(line, 'bad ' + m + ' operands'); continue }
         const rm = (m === 'ABCD' || m === 'SBCD') ? (src.t === 'pre' ? 1 : 0) : 0
         this.emit(addr, m, s, [0xD100 | (dst.reg << 9) | (rm << 3) | src.reg], { src, dst })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // Single-operand: PEA, NEGX, CLR, NEG, NOT, TST
       if (m === 'PEA' || m === 'NEGX' || m === 'CLR' || m === 'NEG' || m === 'NOT' || m === 'TST') {
         const ea = this.parseEA(ops, line.lineNum); if (!ea) { this.err(line, 'bad ' + m + ' operand'); continue }
         this.emit(addr, m, s, [0], { dst: ea })
-        addr += 2; continue 
+        addr += sz; continue 
       }
 
       // Handle LEA <ea>,An more carefully: "LEA LABEL(PC),A0"
@@ -333,7 +312,7 @@ export class Assembler {
         const dst = this.parseEA(parsed[1], line.lineNum)
         if (!src || !dst || dst.t !== 'an') { this.err(line, 'bad LEA operands'); continue }
         this.emit(addr, 'LEA', 4, [0x41C0 | (dst.reg << 9)], { src, dst })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // Two-operand: ADD, SUB, AND, OR, EOR, CMP, MOVEA, ADDA, SUBA, CMPA, ADDX, SUBX (already handled), MULS.L etc.
@@ -342,7 +321,7 @@ export class Assembler {
         const src = this.parseEA(parsed[0], line.lineNum); const dst = this.parseEA(parsed[1], line.lineNum)
         if (!src || !dst) { this.err(line, 'bad operands'); continue }
         this.emit(addr, m, s, [0], { src, dst })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       // MOVE (two operands)
@@ -351,7 +330,7 @@ export class Assembler {
         const src = this.parseEA(parsed[0], line.lineNum); const dst = this.parseEA(parsed[1], line.lineNum)
         if (!src || !dst) { this.err(line, 'bad MOVE operand'); continue }
         this.emit(addr, 'MOVE', s, [0], { src, dst })
-        addr += 2; continue
+        addr += sz; continue
       }
 
       if (m !== 'EQU') this.err(line, "unknown mnemonic '" + m + "'")
@@ -367,6 +346,11 @@ export class Assembler {
   private emitAdv(addr: number, mnem: string, sz: Size, words: number[], extra?: Partial<Instruction>): number {
     this.emit(addr, mnem, sz, words, extra)
     return addr + words.length * 2
+  }
+
+  private advanceByLast(addr: number): number {
+    const last = this.instructions[this.instructions.length - 1]
+    return addr + (last?.byteSize ?? 2)
   }
 
   private err(line: RawLine, msg: string): void { this.errors.push('Line ' + (line.lineNum + 1) + ': ' + msg) }

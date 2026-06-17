@@ -11,6 +11,7 @@ export function useSimulator() {
   const errors = ref<string[]>([])
   const currentLine = ref<number>(-1)
   const instructions = ref<Instruction[]>([])
+  let runRaf = 0
 
   function updateSnapshot(): void {
     Object.assign(snapshot, cpu.snapshot())
@@ -23,6 +24,7 @@ export function useSimulator() {
   }
 
   function assemble(code: string): boolean {
+    stop()
     errors.value = []
     const result = assembler.assemble(code)
     if (result.errors.length > 0) {
@@ -39,17 +41,38 @@ export function useSimulator() {
   }
 
   function step(): boolean {
+    stop()
     const ok = cpu.step()
     updateSnapshot()
     return ok
   }
 
   function run(): void {
-    cpu.run()
+    if (state.value === 'running') { stop(); return }
+    if (state.value === 'finished' || state.value === 'error') return
+    cpu.state = 'running'
+    state.value = 'running'
+    runLoop()
+  }
+
+  function runLoop(): void {
+    const batchSize = 2000
+    for (let i = 0; i < batchSize; i++) {
+      cpu.state = 'running'
+      if (!cpu.step()) { updateSnapshot(); return }
+    }
+    updateSnapshot()
+    runRaf = requestAnimationFrame(runLoop)
+  }
+
+  function stop(): void {
+    if (runRaf) { cancelAnimationFrame(runRaf); runRaf = 0 }
+    if (cpu.state === 'running') cpu.state = 'paused'
     updateSnapshot()
   }
 
   function reset(): void {
+    stop()
     cpu.reset()
     errors.value = []
     output.value = ''
@@ -71,8 +94,24 @@ export function useSimulator() {
     updateSnapshot()
   }
 
+  function runToLine(line: number): void {
+    stop()
+    const targetAddrs: number[] = []
+    for (const inst of instructions.value) {
+      if (inst.sourceLine !== undefined && inst.sourceLine >= line) {
+        targetAddrs.push(inst.addr)
+      }
+    }
+    if (targetAddrs.length === 0) { run(); return }
+    const targetAddr = targetAddrs[0]
+    cpu.toggleBreakpoint(targetAddr)
+    cpu.run()
+    cpu.toggleBreakpoint(targetAddr)
+    updateSnapshot()
+  }
+
   return {
     cpu, assembler, snapshot, state, output, errors, currentLine, instructions,
-    assemble, step, run, reset, toggleBreakpoint, setRegistry, updateSnapshot
+    assemble, step, run, stop, reset, toggleBreakpoint, setRegistry, updateSnapshot, runToLine
   }
 }

@@ -44,7 +44,7 @@ export class M68K {
     x.set('MOVEQ', this.iMOVEQ)   ; x.set('MOVEA', this.iMOVEA)
     x.set('ADD', this.iADD)       ; x.set('SUB', this.iADD)
     x.set('AND', this.iLOGIC)     ; x.set('OR', this.iLOGIC) ; x.set('EOR', this.iLOGIC)
-    x.set('ADDA', this.iMOVEA)    ; x.set('SUBA', this.iMOVEA); x.set('CMPA', this.iCMPA)
+    x.set('ADDA', this.iADDA)    ; x.set('SUBA', this.iSUBA); x.set('CMPA', this.iCMPA)
     x.set('ADDI', this.iARITHI)   ; x.set('SUBI', this.iARITHI); x.set('ANDI', this.iARITHI)
     x.set('ORI', this.iARITHI)    ; x.set('EORI', this.iARITHI); x.set('CMPI', this.iCMPI)
     x.set('CMP', this.iCMP)       ; x.set('MULS', this.iMULS); x.set('MULU', this.iMULU)
@@ -183,6 +183,8 @@ export class M68K {
   private iMOVE = (c: M68K, i: Instruction): void => { const v = c.rOp(i.src!, i.size); c.wOp(i.dst!, i.size, v); c.fNZ(v, i.size); c.v = false; c.c = false }
   private iMOVEQ = (c: M68K, i: Instruction): void => { const v = sext(i.imm!, 8); c.d[i.dst!.reg] = v; c.fNZ(v, 4); c.v = false; c.c = false }
   private iMOVEA = (c: M68K, i: Instruction): void => { const v = c.rOp(i.src!, i.size); i.size === 2 ? c.a[i.dst!.reg] = u32(sext(v, 16)) : c.a[i.dst!.reg] = u32(v) }
+  private iADDA = (c: M68K, i: Instruction): void => { const v = c.rOp(i.src!, i.size); const srcVal = i.size === 2 ? sext(v, 16) : s32(v); c.a[i.dst!.reg] = u32(c.a[i.dst!.reg] + srcVal) }
+  private iSUBA = (c: M68K, i: Instruction): void => { const v = c.rOp(i.src!, i.size); const srcVal = i.size === 2 ? sext(v, 16) : s32(v); c.a[i.dst!.reg] = u32(c.a[i.dst!.reg] - srcVal) }
 
   private iADD = (c: M68K, i: Instruction): void => {
     const src = c.rOp(i.src!, i.size); const dst = c.rOp(i.dst!, i.size); const s = i.size
@@ -369,13 +371,14 @@ export class M68K {
     if (this.breakpoints.has(this.program[this.instrIndex]?.addr)) { this.state = 'paused'; return false }
     this.state = 'paused'; return true
   }
-  run(maxSteps = 50000): void {
+  run(maxSteps = 2000000): void {
     this.state = 'running'
     for (let s = 0; s < maxSteps; s++) {
       if (this.instrIndex >= this.program.length) { this.state = 'finished'; return }
       if (this.breakpoints.has(this.program[this.instrIndex].addr)) { this.state = 'paused'; return }
       if (!this.step()) return; if (this._halt) return
     }
+    this.state = 'finished'
   }
   halt(): void { this._halt = true }
   private syncIndex(): void {

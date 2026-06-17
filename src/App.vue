@@ -22,7 +22,7 @@
       <div class="editor-area">
         <div class="editor-pane">
           <div class="pane-header">Editor</div>
-          <MonacoEditor v-model="code" :highlightLine="currentLine" />
+          <MonacoEditor v-model="code" :highlightLine="currentLine" @runToLine="doRunToLine" />
         </div>
         <div v-if="errors.length > 0" class="errors-pane">
           <div class="pane-header pane-header-error">Assembly Errors</div>
@@ -35,8 +35,16 @@
       <div class="resize-handle" @mousedown="startDrag('right', $event)"></div>
 
       <div class="right-panel" :style="{ width: rightW + 'px' }">
-        <div class="right-top">
+        <div class="right-tabs">
+          <button class="tab-btn" :class="{ active: rightTab === 'mem' }" @click="rightTab = 'mem'">Memory</button>
+          <button class="tab-btn" :class="{ active: rightTab === 'io' }" @click="rightTab = 'io'">I/O</button>
+        </div>
+        <div class="right-top" v-show="rightTab === 'mem'">
           <MemoryPanel :memory="memory" :pc="snapshot.pc" />
+        </div>
+        <div class="right-top io-split" v-show="rightTab === 'io'">
+          <div class="io-display"><DisplayPanel :memory="memory" /></div>
+          <div class="io-input"><InputPanel :memory="memory" /></div>
         </div>
         <div class="right-bottom">
           <OutputPanel :text="output" @clear="doClearOutput" />
@@ -51,13 +59,15 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import ControlBar, { type Example } from './components/ControlBar.vue'
 import RegisterPanel from './components/RegisterPanel.vue'
 import MemoryPanel from './components/MemoryPanel.vue'
+import DisplayPanel from './components/DisplayPanel.vue'
+import InputPanel from './components/InputPanel.vue'
 import OutputPanel from './components/OutputPanel.vue'
 import MonacoEditor from './components/MonacoEditor.vue'
 import { useSimulator } from './composables/useSimulator'
 
 const {
   cpu, snapshot, state, output, errors, currentLine,
-  assemble, step, run, reset
+  assemble, step, run, runToLine, reset
 } = useSimulator()
 
 const memory = cpu.memory
@@ -111,9 +121,13 @@ const examples: Example[] = [
   { name: '10. Recursive Fac', code: `; Recursive factorial 5! = 120\n        ORG     $4000\n\nSTART:  MOVEQ   #5,D0\n        JSR     FACT\n        MOVE.L  D0,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n\nFACT:   CMPI    #1,D0\n        BGT     REC\n        MOVEQ   #1,D0\n        RTS\nREC:    MOVE.L  D0,-(A7)\n        SUBQ    #1,D0\n        JSR     FACT\n        MOVE.L  (A7)+,D1\n        MULS    D1,D0\n        RTS\n        END     START` },
   { name: '11. Count 1-Bits', code: `; Count 1-bits in $DEADBEEF (should be 24)\n        ORG     $4000\n\nSTART:  MOVE.L  #$DEADBEEF,D0\n        MOVEQ   #0,D1\n        MOVEQ   #32,D2\n\nLOOP:   LSL     #1,D0\n        BCC     NOCARRY\n        ADDQ    #1,D1\nNOCARRY:SUBQ    #1,D2\n        BNE     LOOP\n\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
   { name: '12. SETcc Demo', code: `; SETcc – set byte on condition\n        ORG     $4000\n\nSTART:  MOVEQ   #5,D0\n        MOVEQ   #3,D1\n        CMP     D1,D0           ; 5 > 3\n        SGT     D2              ; D2 = $FF (true)\n        SEQ     D3              ; D3 = $00 (false)\n        SNE     D4              ; D4 = $FF (true)\n        ANDI    #$FF,D2\n        MOVE.L  D2,D1\n        MOVEQ   #5,D0\n        TRAP    #15\n        MOVEQ   #0,D0\n        TRAP    #15\n        END     START` },
+  { name: '13. Display Demo (XOR pattern)', code: `; Write XOR pattern to memory-mapped display\n; Display at $FF0000, 256x256 pixels grayscale\n        ORG     $4000\n\nSTART:  LEA     $FF0000,A0     ; A0 = display buffer\n        MOVEQ   #0,D4           ; y = 0\n\nROW:    MOVEQ   #0,D5           ; x = 0\n\nCOL:    ; pixel = (x XOR y) + x\n        MOVE.L  D5,D0           ; D0 = x\n        EOR     D4,D0           ; D0 = x ^ y\n        ADD     D5,D0           ; D0 = (x^y) + x\n        MOVE.B  D0,(A0)+        ; write to display\n        ADDQ    #1,D5           ; x++\n        CMPI    #256,D5         ; x < 256 ?\n        BNE     COL\n\n        ADDQ    #1,D4           ; y++\n        CMPI    #256,D4         ; y < 256 ?\n        BNE     ROW\n\n        MOVEQ   #0,D0\n        TRAP    #15             ; halt\n        END     START` },
+  { name: '14. Display Demo (Plasma)', code: `; Plasma-like pattern on display $FF0000\n; Uses (x*x + y*y) >> 6 as pixel value\n        ORG     $4000\n\nSTART:  LEA     $FF0000,A0     ; A0 = display buffer\n        MOVEQ   #0,D4           ; y = 0\n\nROW:    MOVEQ   #0,D5           ; x = 0\n\nCOL:    ; pixel = ((x*x/256) + (y*y/256)) & 0xFF\n        MOVE.L  D5,D0           ; D0 = x\n        MULS    D5,D0           ; D0 = x^2 (lower word)\n        LSR     #6,D0           ; scale down\n        MOVE.L  D4,D1           ; D1 = y\n        MULS    D4,D1           ; D1 = y^2\n        LSR     #6,D1           ; scale down\n        ADD     D1,D0           ; D0 = x^2 + y^2\n        MOVE.B  D0,(A0)+        ; write pixel\n        ADDQ    #1,D5           ; x++\n        CMPI    #256,D5\n        BNE     COL\n\n        ADDQ    #1,D4           ; y++\n        CMPI    #256,D4\n        BNE     ROW\n\n        MOVEQ   #0,D0\n        TRAP    #15             ; halt\n        END     START` },
+  { name: '15. Input Move Dot', code: `; Move a white dot on black background\n; Use D-Pad buttons (I/O tab) to move\n        ORG     $4000\n\nSTART:  MOVE.L  #128,D2         ; x\n        MOVE.L  #128,D3         ; y\n        MOVEQ   #$FF,D4         ; white\n        MOVEQ   #0,D5           ; black\n\n        JSR     FILL_BLK\n        JSR     DRAW\n\nLOOP:   ; save old position\n        MOVE.L  D2,D6\n        MOVE.L  D3,D7\n\n        ; read input\n        TST.B   $FE0000\n        BEQ     CK_DN\n        TST     D3\n        BEQ     CK_DN\n        SUBQ    #1,D3\nCK_DN:  TST.B   $FE0001\n        BEQ     CK_LT\n        CMPI    #255,D3\n        BEQ     CK_LT\n        ADDQ    #1,D3\nCK_LT:  TST.B   $FE0002\n        BEQ     CK_RT\n        TST     D2\n        BEQ     CK_RT\n        SUBQ    #1,D2\nCK_RT:  TST.B   $FE0003\n        BEQ     NOCHG\n        CMPI    #255,D2\n        BEQ     NOCHG\n        ADDQ    #1,D2\n\n        ; if no change, skip redraw\nNOCHG:  CMP.L   D6,D2\n        BNE     REDRAW\n        CMP.L   D7,D3\n        BNE     REDRAW\n        BRA     LOOP\n\n        ; draw at NEW, then erase OLD\nREDRAW: JSR     DRAW\n\n        ; push new position\n        MOVE.L  D2,-(A7)\n        MOVE.L  D3,-(A7)\n\n        ; erase old\n        MOVE.L  D6,D2\n        MOVE.L  D7,D3\n        JSR     ERASE\n\n        ; pop new position\n        MOVE.L  (A7)+,D3\n        MOVE.L  (A7)+,D2\n        BRA     LOOP\n\nDRAW:   LEA     $FF0000,A0\n        MOVE.L  D3,D0\n        LSL     #8,D0\n        ADD     D2,D0\n        ADDA.L  D0,A0\n        MOVE.B  D4,(A0)\n        RTS\n\nERASE:  LEA     $FF0000,A0\n        MOVE.L  D3,D0\n        LSL     #8,D0\n        ADD     D2,D0\n        ADDA.L  D0,A0\n        MOVE.B  D5,(A0)\n        RTS\n\nFILL_BLK:LEA   $FF0000,A0\n        MOVE.L  #16384,D0\nFILL_LP:CLR.L  (A0)+\n        SUBQ    #1,D0\n        BNE     FILL_LP\n        RTS\n\n        END     START` },
 ]
 
 const selectedExample = ref('')
+const rightTab = ref<'mem' | 'io'>('mem')
 const code = ref(examples[0].code)
 
 function selectExample(name: string): void {
@@ -126,6 +140,7 @@ function selectExample(name: string): void {
 function doAssemble(): void { assemble(code.value) }
 function doStep(): void { step() }
 function doRun(): void { run() }
+function doRunToLine(line: number): void { runToLine(line) }
 
 function doReset(): void {
   reset()
@@ -134,7 +149,7 @@ function doReset(): void {
 
 function doClearOutput(): void { output.value = '' }
 
-const canRun = computed(() => state.value === 'idle' || state.value === 'paused')
+const canRun = computed(() => state.value === 'idle' || state.value === 'paused' || state.value === 'running')
 const canStep = computed(() => state.value === 'idle' || state.value === 'paused')
 </script>
 
@@ -207,6 +222,32 @@ const canStep = computed(() => state.value === 'idle' || state.value === 'paused
   overflow: hidden;
   flex-shrink: 0;
 }
+.right-tabs {
+  display: flex;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 3px 14px;
+  font-size: 11px;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 2px solid transparent;
+}
+.tab-btn.active {
+  color: #d4d4d4;
+  border-bottom-color: #0e639c;
+}
+.tab-btn:hover { color: #ccc; }
 .right-top { flex: 1; overflow: hidden; }
+.io-split { display: flex; flex-direction: column; gap: 0; }
+.io-display { flex: 1; overflow: hidden; min-height: 0; }
+.io-input { flex-shrink: 0; }
 .right-bottom { height: 200px; overflow: hidden; }
 </style>
