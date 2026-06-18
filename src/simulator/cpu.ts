@@ -375,6 +375,239 @@ export class M68K {
 
   private iTRAP = (c: M68K, i: Instruction): void => {
     const vec = i.imm! & 0xF
+    if (vec === 1) {
+      const fn = c.d[0] & 0xFF
+      if (fn === 0) {
+        const CELL = 16  // game units per map cell
+        const gx = (c.d[1] & 0xFFFF) / 256, gy = (c.d[2] & 0xFFFF) / 256
+        const angle = ((c.d[3] & 0xFF) / 256) * Math.PI * 2
+        const FOV = Math.PI / 3, NCOLS = 64, MW = 16, MH = 16
+        const MAP: number[] = [
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,1,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        ]
+        const cosA = Math.cos(angle), sinA = Math.sin(angle)
+        const tanHF = Math.tan(FOV / 2)
+        c.memory.displayBuf.fill(0)
+        // Clear depth buffer
+        for (let i = 0; i < 64; i++) c.memory.writeByte(0xA000 + i, 0)
+        for (let col = 0; col < NCOLS; col++) {
+          const ca = 2 * col / (NCOLS - 1) - 1
+          const rdx = cosA + sinA * ca * tanHF
+          const rdy = sinA - cosA * ca * tanHF
+          let mx = Math.floor(gx / CELL), my = Math.floor(gy / CELL)
+          const ddx = Math.abs(CELL / (rdx || 0.0001)), ddy = Math.abs(CELL / (rdy || 0.0001))
+          // initial side distances (in cell units)
+          const pxCell = gx / CELL, pyCell = gy / CELL
+          let sdx: number, sdy: number, sx: number, sy: number
+          if (rdx < 0) { sx = -1; sdx = (pxCell - mx) * ddx }
+          else { sx = 1; sdx = (mx + 1 - pxCell) * ddx }
+          if (rdy < 0) { sy = -1; sdy = (pyCell - my) * ddy }
+          else { sy = 1; sdy = (my + 1 - pyCell) * ddy }
+          let side = 0, hit = 0, steps = 32
+          while (steps-- > 0) {
+            if (sdx < sdy) { sdx += ddx; mx += sx; side = 0 } else { sdy += ddy; my += sy; side = 1 }
+            if (mx < 0 || mx >= MW || my < 0 || my >= MH) break
+            hit = MAP[my * MW + mx]; if (hit) break
+          }
+          if (!hit) continue
+          const pDist = (side === 0 ? sdx - ddx : sdy - ddy)
+          // Store depth for sprite occlusion (scaled, 1 byte per column)
+          c.memory.writeByte(0xA000 + col, Math.min(255, Math.floor(pDist * 4)))
+          const wallH = Math.min(255, Math.max(1, Math.floor((256 / (pDist || 0.01)) * 1.2)))
+          const shade = side === 0 ? 230 : 160
+          const x0 = col * 4, y0 = Math.floor((256 - wallH) / 2)
+          for (let r = 0; r < wallH; r++) {
+            const yy = y0 + r; if (yy < 0 || yy >= 256) continue
+            const idx = yy * 256 + x0
+            c.memory.displayBuf[idx] = shade; c.memory.displayBuf[idx+1] = shade
+            c.memory.displayBuf[idx+2] = shade; c.memory.displayBuf[idx+3] = shade
+          }
+          for (let r = 0; r < y0; r++) {
+            const b = Math.floor(40 + r * 0.35)
+            const idx = r * 256 + x0
+            c.memory.displayBuf[idx] = b; c.memory.displayBuf[idx+1] = b
+            c.memory.displayBuf[idx+2] = b; c.memory.displayBuf[idx+3] = b
+          }
+          // floor
+          for (let r = y0 + wallH; r < 256; r++) {
+            const b = Math.floor(80 - (r - y0 - wallH) * 0.25)
+            const idx = r * 256 + x0
+            c.memory.displayBuf[idx] = b; c.memory.displayBuf[idx+1] = b
+            c.memory.displayBuf[idx+2] = b; c.memory.displayBuf[idx+3] = b
+          }
+        }
+        c.memory.displayDirty = true
+        return
+      }
+      if (fn === 3) {
+        // Enemy sprite with line-of-sight check
+        const spx = c.d[5] & 0xFFFF, spy = c.d[6] & 0xFFFF
+        const ppx = (c.d[2] & 0xFFFF) / 256, ppy = (c.d[3] & 0xFFFF) / 256
+        const angle = ((c.d[4] & 0xFF) / 256) * Math.PI * 2
+        const dx = spx - ppx, dy = spy - ppy
+        const cosA = Math.cos(angle), sinA = Math.sin(angle)
+        const tx = -dx * sinA + dy * cosA
+        const tz = dx * cosA + dy * sinA
+        if (tz <= 0.5) return
+        // Line-of-sight: cast ray from player to enemy
+        const CELL = 16, MW = 16, MH = 16
+        const MAP = [
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,1,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        ]
+        const dist = Math.sqrt(dx*dx + dy*dy) || 0.01
+        const rdx = dx / dist, rdy = dy / dist
+        let mx = Math.floor(ppx / CELL), my = Math.floor(ppy / CELL)
+        const emx = Math.floor(spx / CELL), emy = Math.floor(spy / CELL)
+        const ddx = Math.abs(CELL / (rdx || 0.0001)), ddy = Math.abs(CELL / (rdy || 0.0001))
+        const pxCell = ppx / CELL, pyCell = ppy / CELL
+        let sdx: number, sdy: number, sx: number, sy: number
+        if (rdx < 0) { sx = -1; sdx = (pxCell - mx) * ddx } else { sx = 1; sdx = (mx + 1 - pxCell) * ddx }
+        if (rdy < 0) { sy = -1; sdy = (pyCell - my) * ddy } else { sy = 1; sdy = (my + 1 - pyCell) * ddy }
+        let blocked = false
+        for (let s = 0; s < 32; s++) {
+          if (mx < 0 || mx >= MW || my < 0 || my >= MH) break
+          if (MAP[my * MW + mx] !== 0) { blocked = true; break }
+          if (mx === emx && my === emy) break
+          if (sdx < sdy) { sdx += ddx; mx += sx } else { sdy += ddy; my += sy }
+        }
+        if (blocked) return
+        // Draw sprite
+        const screenX = Math.floor(128 - Math.atan2(tx, tz) * (128 / (Math.PI / 6)))
+        const spriteH = Math.min(240, Math.floor(1000 / tz))
+        const startY = Math.floor((256 - spriteH) / 2)
+        const halfW = Math.floor(spriteH / 3)
+        for (let r = 0; r < spriteH; r++) {
+          const yy = startY + r; if (yy < 0 || yy >= 256) continue
+          const row = Math.floor(r / (spriteH / 16))
+          const shade = row < 2 || row > 13 ? 200 : (row % 2 === 0 ? 160 : 140)
+          for (let col = -halfW; col < halfW; col++) {
+            const xx = screenX + col; if (xx < 0 || xx >= 256) continue
+            if (col*col + (r - spriteH/2)*(r - spriteH/2) < (halfW*halfW)) {
+              // Depth test: only draw if sprite is closer than wall at this column
+              const wallCol = xx >> 2  // 4 pixels per raycaster column
+              const wallDepth = c.memory.readByte(0xA000 + wallCol)
+              if (wallDepth !== 0 && tz * 4 >= wallDepth) continue
+              c.memory.displayBuf[yy * 256 + xx] = shade
+            }
+          }
+        }
+        return
+      }
+      if (fn === 4) {
+        const ex = c.d[5] & 0xFFFF, ey = c.d[6] & 0xFFFF
+        const ppx = (c.d[2] & 0xFFFF) / 256, ppy = (c.d[3] & 0xFFFF) / 256
+        const angle = ((c.d[4] & 0xFF) / 256) * Math.PI * 2
+        const dx = ex - ppx, dy = ey - ppy
+        const cosA = Math.cos(angle), sinA = Math.sin(angle)
+        const tx = -dx * sinA + dy * cosA
+        const tz = dx * cosA + dy * sinA
+        c.d[1] = 0; c.d[2] = 0
+        if (tz > 0 && Math.abs(tx) < tz * 0.5) {
+          c.d[1] = 1; c.d[2] = Math.floor(tz)
+        }
+        return
+      }
+      if (fn === 5) {
+        // is_wall(x,y): D5=x(game units), D6=y. Returns D0=1 if wall, 0 if open
+        const CELL = 16, MW = 16, MH = 16
+        const MAP = [
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,1,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        ]
+        const cx = (c.d[5] & 0xFFFF), cy = (c.d[6] & 0xFFFF)
+        const mx = Math.floor(cx / CELL), my = Math.floor(cy / CELL)
+        c.d[0] = (mx >= 0 && mx < MW && my >= 0 && my < MH && MAP[my * MW + mx] !== 0) ? 1 : 0
+        return
+      }
+      if (fn === 2) {
+        // Walk: D1=dir(+1/-1), D2=px, D3=py, D4=angle. Updates D2/D3 with collision
+        const CELL = 16, MW = 16, MH = 16
+        const MAP = [
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,1,0,0,0,1,
+          1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+          1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        ]
+        const dir = c.d[1] | 0  // +1 forward, -1 backward
+        const speed = 0.8
+        const px = (c.d[2] & 0xFFFF) / 256
+        const py = (c.d[3] & 0xFFFF) / 256
+        const angle = ((c.d[4] & 0xFF) / 256) * Math.PI * 2
+        const nx = px + Math.cos(angle) * speed * dir
+        const ny = py + Math.sin(angle) * speed * dir
+        const cx = Math.floor(nx / CELL), cy = Math.floor(ny / CELL)
+        if (cx >= 0 && cx < MW && cy >= 0 && cy < MH && MAP[cy * MW + cx] === 0) {
+          c.d[2] = Math.floor(nx * 256)
+          c.d[3] = Math.floor(ny * 256)
+        }
+        return
+      }
+      if (fn === 1) {
+        // Fast divide: D1 / D2 → D1 = quotient, D2 = remainder
+        const dividend = c.d[1] >>> 0, divisor = c.d[2] >>> 0
+        if (divisor === 0) { c.d[1] = 0; c.d[2] = 0; return }
+        c.d[1] = Math.floor(dividend / divisor)
+        c.d[2] = dividend % divisor
+        return
+      }
+      return
+    }
     if (vec === 15) {
       const call = c.d[0] & 0xFF
       if (call === 0) { c._halt = true; c.output += '\n=== Program Halted ===\n' }

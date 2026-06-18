@@ -13,16 +13,32 @@ export function useSimulator() {
   const instructions = ref<Instruction[]>([])
   let runRaf = 0
 
-  // Keyboard interrupt at level 2
+  // Keyboard → memory-mapped input + level 1/2 interrupt
+  const keyMap: Record<string, number> = {
+    ArrowUp: 0, ArrowDown: 1, ArrowLeft: 2, ArrowRight: 3,
+    w: 0, s: 1, a: 2, d: 3,
+    ' ': 4, Enter: 4,      // A button
+    Shift: 5,              // B button
+  }
   function onKeyDown(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-    cpu.requestInterrupt(2)
+    const idx = keyMap[e.key]
+    if (idx !== undefined) {
+      cpu.memory.setInput(idx, 1)
+      cpu.requestInterrupt(idx < 4 ? 1 : 2)
+    }
+  }
+  function onKeyUp(e: KeyboardEvent) {
+    const idx = keyMap[e.key]
+    if (idx !== undefined) cpu.memory.setInput(idx, 0)
   }
   onMounted(() => {
     document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('keyup', onKeyUp)
   })
   onUnmounted(() => {
     document.removeEventListener('keydown', onKeyDown)
+    document.removeEventListener('keyup', onKeyUp)
   })
 
   function updateSnapshot(): void {

@@ -932,6 +932,36 @@ clear();
 while (1) {}
 ` },
 
+  {     name: 'S5. 3D Maze',
+    code: `// 3D Raycaster + enemies — ISR-driven
+// ↑↓ move  ←→ turn  A shoot
+
+func onISR1() {}
+func onISR2() {}
+
+func onISR3() {
+    if (peek(0xFE0000)) { walk(1); }
+    if (peek(0xFE0001)) { walk(-1); }
+    if (peek(0xFE0002)) { pa = (pa + 4) & 255; }
+    if (peek(0xFE0003)) { pa = (pa + 252) & 255; }
+
+    if (peek(0xFE0004) && en) {
+        if (shoot(en & 255, (en >> 8) & 255)) { en = 0; }
+    }
+
+    seed = (seed * 13 + 7) & 255;
+    if (en == 0 && seed < 100) { en = (130 << 8) | 200; }
+
+    raycast(px, py, pa);
+    if (en) { render_enemy(en & 255, (en >> 8) & 255); }
+}
+
+var px = 32768; var py = 32768; var pa = 0;
+var en = 0; var seed = 123;
+
+while (1) {}
+` },
+
   { name: 'S1. Script: Moving Dot', code: `// Moving dot — use D-Pad
 func draw(x, y, c) {
     poke(0xFF0000 + y*256 + x, c);

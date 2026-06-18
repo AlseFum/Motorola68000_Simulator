@@ -35,7 +35,7 @@ type TokenKind =
   | '(' | ')' | '{' | '}' | ';' | ','
   | 'eof'
 
-interface Token { kind: TokenKind; text: string; line: number }
+interface Token { kind: TokenKind; text: string; val?: number; line: number }
 
 const KW: Record<string, TokenKind> = { var: 'var', if: 'if', else: 'else', while: 'while', do: 'do', func: 'func', return: 'return' }
 
@@ -58,12 +58,12 @@ function tokenize(src: string): Token[] {
       let v = ''; i += 2
       while (i < src.length && /[0-9a-fA-F]/.test(src[i])) v += src[i++]
       if (!v) err("bad hex literal")
-      tokens.push({ kind: 'number', text: v, line })
+      tokens.push({ kind: 'number', text: v, val: parseInt(v, 16), line })
       continue
     }
     if (/\d/.test(ch)) {
       let v = ''; while (i < src.length && /\d/.test(src[i])) v += src[i++]
-      tokens.push({ kind: 'number', text: v, line })
+      tokens.push({ kind: 'number', text: v, val: parseInt(v, 10), line })
       continue
     }
 
@@ -171,7 +171,9 @@ class Parser {
   private multiplicative(): Expr { let left = this.unary(); while (this.peek() === '*' || this.peek() === '/' || this.peek() === '%' || this.peek() === '&' || this.peek() === '|' || this.peek() === '^' || this.peek() === '<<' || this.peek() === '>>') { const op = this.tokens[this.pos++].text; left = { kind: 'binary', left, op, right: this.unary() } }; return left }
   private unary(): Expr { if (this.peek() === '-' || this.peek() === '!') { const op = this.tokens[this.pos++].text as '-' | '!'; return { kind: 'unary', op, expr: this.unary() } }; return this.primary() }
   private primary(): Expr {
-    if (this.peek() === 'number') { const t = this.tokens[this.pos++]; return { kind: 'number', val: parseInt(t.text, t.text.match(/^[0-9]/) ? 10 : 16) } }
+    if (this.peek() === 'number') {
+      const t = this.tokens[this.pos++]; return { kind: 'number', val: t.val! }
+    }
     if (this.peek() === 'ident') { const name = this.tokens[this.pos++].text; if (this.peek() === '(') { this.skip('('); const args: Expr[] = []; if (this.peek() !== ')') { args.push(this.expr()); while (this.peek() === ',') { this.skip(','); args.push(this.expr()) } }; this.skip(')'); return { kind: 'call', name, args } }; return { kind: 'ident', name } }
     if (this.peek() === '(') { this.skip('('); const e = this.expr(); this.skip(')'); return e }
     return this.err('expected expression')
@@ -277,7 +279,7 @@ class CodeGen {
       this.asm.push(`FUNC_${fi.name}:`)
       const outerNextReg = this.nextReg
       // ISRs own D2-D7 (game state) — only save scratch D0/D1/A0
-      this.nextReg = 2  // use D2-D7 for ISR-locals (but no var allowed in ISR body)
+      this.nextReg = 7  // ISR locals start at D7 (beyond globals)
       this.asm.push('        MOVE.L  D0,-(A7)')
       this.asm.push('        MOVE.L  D1,-(A7)')
       this.asm.push('        MOVE.L  A0,-(A7)')
@@ -431,8 +433,14 @@ class CodeGen {
   private genCondBranch(cond: Expr, label: string, jumpIfTrue: boolean): void {
     if (cond.kind === 'binary' && ['==', '!=', '<', '>', '<=', '>='].includes(cond.op)) {
       this.doExpr(cond.left, 0)
-      if (cond.right.kind === 'number') this.asm.push(`        CMPI    #${cond.right.val},D0`)
-      else { this.doExpr(cond.right, 1); this.asm.push('        CMP.L   D1,D0') }
+      if (cond.right.kind === 'number') {
+        this.asm.push(`        CMPI    #${cond.right.val},D0`)
+      } else {
+        this.asm.push('        MOVE.L  D0,-(A7)')
+        this.doExpr(cond.right, 1)
+        this.asm.push('        MOVE.L  (A7)+,D0')
+        this.asm.push('        CMP.L   D1,D0')
+      }
       if (jumpIfTrue) this.asm.push(`        ${cond.op === '==' ? 'BEQ' : cond.op === '!=' ? 'BNE' : cond.op === '<' ? 'BLT' : cond.op === '>' ? 'BGT' : cond.op === '<=' ? 'BLE' : 'BGE'}     ${label}`)
       else this.asm.push(`        ${cond.op === '==' ? 'BNE' : cond.op === '!=' ? 'BEQ' : cond.op === '<' ? 'BGE' : cond.op === '>' ? 'BLE' : cond.op === '<=' ? 'BGT' : 'BLT'}     ${label}`)
     } else {
@@ -466,6 +474,85 @@ class CodeGen {
       return dest ?? 0
     }
     // Built-ins
+    if (e.name === 'render_enemy') {
+      if (e.args.length !== 2) throw new Error('render_enemy(x, y)')
+      for (let r = 2; r <= 6; r++) { this.asm.push(`        MOVE.L  D${r},-(A7)`) }
+      // Evaluate first arg → push, second arg → push (avoids clobbering globals)
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,-(A7)')
+      this.doExpr(e.args[1], 0); this.asm.push('        MOVE.L  D0,-(A7)')
+      this.asm.push('        MOVE.L  (A7)+,D6')
+      this.asm.push('        MOVE.L  (A7)+,D5')
+      this.asm.push('        MOVEQ   #3,D0'); this.asm.push('        TRAP    #1')
+      for (let r = 6; r >= 2; r--) { this.asm.push(`        MOVE.L  (A7)+,D${r}`) }
+      return -1
+    }
+    if (e.name === 'shoot') {
+      if (e.args.length !== 2) throw new Error('shoot(ex, ey)')
+      for (let r = 2; r <= 6; r++) { this.asm.push(`        MOVE.L  D${r},-(A7)`) }
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,-(A7)')
+      this.doExpr(e.args[1], 0); this.asm.push('        MOVE.L  D0,-(A7)')
+      this.asm.push('        MOVE.L  (A7)+,D6')
+      this.asm.push('        MOVE.L  (A7)+,D5')
+      this.asm.push('        MOVEQ   #4,D0'); this.asm.push('        TRAP    #1')
+      for (let r = 6; r >= 2; r--) { this.asm.push(`        MOVE.L  (A7)+,D${r}`) }
+      return 0
+    }
+    if (e.name === 'shoot') {
+      if (e.args.length !== 2) throw new Error('shoot(ex, ey)')
+      for (let r = 2; r <= 6; r++) { this.asm.push(`        MOVE.L  D${r},-(A7)`) }
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,D5')
+      this.doExpr(e.args[1], 0); this.asm.push('        MOVE.L  D0,D6')
+      this.asm.push('        MOVEQ   #4,D0'); this.asm.push('        TRAP    #1')
+      for (let r = 6; r >= 2; r--) { this.asm.push(`        MOVE.L  (A7)+,D${r}`) }
+      return 0  // hit result in D0
+    }
+    if (e.name === 'shoot') {
+      for (let r = 2; r <= 4; r++) { this.asm.push(`        MOVE.L  D${r},-(A7)`) }
+      // read enemy position from globals (D5=en_x packed) — pass to D5,D6
+      // Actually: Script passes enemy x,y as args to shoot(en1_x, en1_y)
+      if (e.args.length !== 2) throw new Error('shoot(ex, ey)')
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,D5')
+      this.doExpr(e.args[1], 0); this.asm.push('        MOVE.L  D0,D6')
+      this.asm.push('        MOVEQ   #4,D0'); this.asm.push('        TRAP    #1')
+      for (let r = 4; r >= 2; r--) { this.asm.push(`        MOVE.L  (A7)+,D${r}`) }
+      return 0  // hit result in D0
+    }
+    if (e.name === 'is_wall') {
+      if (e.args.length !== 2) throw new Error('is_wall(x, y)')
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,-(A7)')
+      this.doExpr(e.args[1], 0); this.asm.push('        MOVE.L  D0,D6')
+      this.asm.push('        MOVE.L  (A7)+,D5')
+      this.asm.push('        MOVEQ   #5,D0')
+      this.asm.push('        TRAP    #1')
+      if (dest !== undefined && dest !== 0) this.asm.push(`        MOVE.L  D0,D${dest}`)
+      return dest ?? 0
+    }
+    if (e.name === 'walk') {
+      if (e.args.length !== 1) throw new Error('walk(dir) — dir=1 forward, -1 backward')
+      for (let r = 4; r <= 7; r++) { this.asm.push(`        MOVE.L  D${r},-(A7)`) }
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,D1')
+      this.asm.push('        MOVEQ   #2,D0')
+      this.asm.push('        TRAP    #1')
+      for (let r = 7; r >= 4; r--) { this.asm.push(`        MOVE.L  (A7)+,D${r}`) }
+      return -1
+    }
+    if (e.name === 'raycast') {
+      if (e.args.length !== 3) throw new Error('raycast(px, py, angle) — 8.8 fixed, angle 0-255')
+      for (let r = 2; r <= 7; r++) { this.asm.push(`        MOVE.L  D${r},-(A7)`) }
+      for (let i = 0; i < 3; i++) { this.doExpr(e.args[i], 0); this.asm.push(`        MOVE.L  D0,D${i + 1}`) }
+      this.asm.push('        MOVEQ   #0,D0')
+      this.asm.push('        TRAP    #1')
+      for (let r = 7; r >= 2; r--) { this.asm.push(`        MOVE.L  (A7)+,D${r}`) }
+      return -1
+    }
+    if (e.name === 'divide') {
+      if (e.args.length !== 2) throw new Error('divide(a, b)')
+      this.doExpr(e.args[0], 0); this.asm.push('        MOVE.L  D0,D1')
+      this.doExpr(e.args[1], 0); this.asm.push('        MOVE.L  D0,D2')
+      this.asm.push('        MOVEQ   #1,D0')
+      this.asm.push('        TRAP    #1')
+      return 0  // quotient in D0
+    }
     if (e.name === 'clear') {
       this.asm.push('        MOVEQ   #7,D0')
       this.asm.push('        TRAP    #15')
