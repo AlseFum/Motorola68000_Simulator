@@ -43,6 +43,7 @@
         <div class="right-tabs">
           <button class="tab-btn" :class="{ active: rightTab === 'mem' }" @click="rightTab = 'mem'">Memory</button>
           <button class="tab-btn" :class="{ active: rightTab === 'io' }" @click="rightTab = 'io'">I/O</button>
+          <button class="tab-btn" :class="{ active: rightTab === 'docs' }" @click="rightTab = 'docs'">Docs</button>
         </div>
         <div class="right-top" v-show="rightTab === 'mem'">
           <MemoryPanel :memory="memory" :pc="snapshot.pc" />
@@ -50,6 +51,9 @@
         <div class="right-top io-split" v-show="rightTab === 'io'">
           <div class="io-display"><DisplayPanel :memory="memory" /></div>
           <div class="io-input"><InputPanel :memory="memory" @irq="(l) => irq(l)" /></div>
+        </div>
+        <div class="right-top" v-show="rightTab === 'docs'">
+          <DocsPanel />
         </div>
         <div class="right-bottom">
           <OutputPanel :text="output" @clear="doClearOutput" />
@@ -95,6 +99,10 @@
         </div>
       </div>
 
+      <div class="mobile-content" v-show="mobileTab === 'docs'">
+        <DocsPanel />
+      </div>
+
       <!-- Bottom tab bar -->
       <div class="mobile-tab-bar">
         <button class="mobile-tab" :class="{ active: mobileTab === 'code' }" @click="mobileTab = 'code'">
@@ -109,6 +117,10 @@
           <span class="m-tab-icon">&#9881;</span>
           <span class="m-tab-label">Debug</span>
         </button>
+        <button class="mobile-tab" :class="{ active: mobileTab === 'docs' }" @click="mobileTab = 'docs'">
+          <span class="m-tab-icon">&#128214;</span>
+          <span class="m-tab-label">Docs</span>
+        </button>
       </div>
     </div>
   </div>
@@ -122,6 +134,7 @@ import MemoryPanel from './components/MemoryPanel.vue'
 import DisplayPanel from './components/DisplayPanel.vue'
 import InputPanel from './components/InputPanel.vue'
 import OutputPanel from './components/OutputPanel.vue'
+import DocsPanel from './components/DocsPanel.vue'
 import MonacoEditor from './components/MonacoEditor.vue'
 import { useSimulator } from './composables/useSimulator'
 import { ScriptCompiler } from './script/compiler'
@@ -139,7 +152,7 @@ function onResize() { windowWidth.value = window.innerWidth }
 onMounted(() => window.addEventListener('resize', onResize))
 onUnmounted(() => window.removeEventListener('resize', onResize))
 const isMobile = computed(() => windowWidth.value < 768)
-const mobileTab = ref<'code' | 'game' | 'debug'>('code')
+const mobileTab = ref<'code' | 'game' | 'debug' | 'docs'>('code')
 
 // --- Desktop panel sizing ---
 const layoutRef = ref<HTMLElement>()
@@ -1012,7 +1025,7 @@ while (1) {}` },
 ]
 
 const selectedExample = ref('')
-const rightTab = ref<'mem' | 'io'>('mem')
+const rightTab = ref<'mem' | 'io' | 'docs'>('mem')
 const editorTab = ref<'asm' | 'script'>('asm')
 const code = ref(examples[0].code)
 const scriptCode = ref(`// Script language — see examples below
