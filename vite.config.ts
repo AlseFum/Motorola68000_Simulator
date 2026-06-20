@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 export default defineConfig({
+  base: '/Motorola68000_Simulator/',
   plugins: [vue()],
   resolve: {
     alias: {
